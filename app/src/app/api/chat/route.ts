@@ -5,6 +5,7 @@ import { patientPortal } from '@/lib/workspace.server';
 import { getLlmClient, resolveChatModel } from '@/lib/llmClient';
 import {
   bookAppointment,
+  checkCoverage,
   completeVisit,
   DENIAL_TEXTS,
   fireEvent,
@@ -93,6 +94,17 @@ const TOOLS: Anthropic.Tool[] = [
         memberId: { type: 'string', description: 'Insurance member ID if given' },
       },
       required: ['name', 'payer'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'check_coverage',
+    description:
+      'Look up a registered patient\'s insurance and run a live 270/271 eligibility check. Call for "what\'s my coverage", "am I insured", "does my plan cover this".',
+    input_schema: {
+      type: 'object',
+      properties: { patientName: { type: 'string' } },
+      required: ['patientName'],
       additionalProperties: false,
     },
   },
@@ -188,6 +200,10 @@ async function executeTool(
         memberId: typeof input.memberId === 'string' ? input.memberId : undefined,
       });
       return { result: r.summary, refresh: true, detail: r.summary };
+    }
+    case 'check_coverage': {
+      const r = await checkCoverage(String(input.patientName));
+      return { result: r.summary, refresh: false, detail: r.summary };
     }
     case 'book_appointment': {
       const r = await bookAppointment({
@@ -337,7 +353,9 @@ async function patientContext(patientId?: string): Promise<{ firstName: string; 
 }
 
 /** The only staff tools the patient persona may use — self-service registration and booking. */
-const PATIENT_TOOLS = TOOLS.filter((t) => t.name === 'register_patient' || t.name === 'book_appointment');
+const PATIENT_TOOLS = TOOLS.filter(
+  (t) => t.name === 'register_patient' || t.name === 'book_appointment' || t.name === 'check_coverage',
+);
 
 /** Chat loop for the patient: answers from their own feed; can register themselves and book visits. */
 async function patientLoop(
@@ -374,7 +392,12 @@ async function patientLoop(
     for (const block of response.content) {
       if (block.type !== 'tool_use') continue;
       const id = `p${++stepId}`;
-      const summary = block.name === 'register_patient' ? 'signing you up' : 'booking your visit';
+      const summary =
+        block.name === 'register_patient'
+          ? 'signing you up'
+          : block.name === 'check_coverage'
+            ? 'checking your insurance'
+            : 'booking your visit';
       emit({ type: 'tool', id, name: block.name, summary, status: 'running' });
       try {
         const { result, refresh, detail } = await executeTool(block.name, (block.input ?? {}) as Record<string, unknown>);

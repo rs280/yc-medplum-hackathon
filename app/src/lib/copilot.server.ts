@@ -1,6 +1,7 @@
 import 'server-only';
 import type { Appointment, Claim, ClaimResponse, Coverage, Encounter, Patient, ServiceRequest } from '@medplum/fhirtypes';
 import { getStore, writeAudit, type FhirStore } from './medplum.server';
+import { coverageFor } from './intents/shared';
 import { checkEligibility } from './stedi.server';
 import { listEpisodic } from './memory/episodic';
 import { avgTurnaroundMs, loadPlaybook } from './memory/playbook';
@@ -233,6 +234,24 @@ export async function registerPatient(opts: {
       `Registered ${opts.name} (MRN ${mrn}) with ${opts.payer}${opts.memberId ? ` member ${opts.memberId}` : ''}. ` +
       `Eligibility check: plan ${elig.planStatus}; prior authorization ${elig.authOrCertIndicator === 'Y' ? 'REQUIRED for imaging — the triage agent will catch this' : 'not indicated'}.`,
     mrn,
+  };
+}
+
+/** Look up a registered patient's insurance and run a fresh 270/271 eligibility check. */
+export async function checkCoverage(patientName: string): Promise<{ summary: string }> {
+  const store = await getStore();
+  const patient = await findPatientByName(store, patientName);
+  if (!patient) return { summary: `No patient named "${patientName}" is registered yet.` };
+  const coverage = await coverageFor(store, `Patient/${patient.id}`);
+  const payer = coverage?.payor?.[0]?.display;
+  if (!payer) return { summary: `${fullNameOf(patient)} is registered but has no insurance on file.` };
+  const elig = await checkEligibility(payer);
+  return {
+    summary:
+      `${fullNameOf(patient)} is covered by ${payer}${coverage?.subscriberId ? ` (member ${coverage.subscriberId})` : ''}; ` +
+      `eligibility check says the plan is ${elig.planStatus}, and prior authorization ${
+        elig.authOrCertIndicator === 'Y' ? 'is required for imaging services' : 'is not indicated'
+      }.`,
   };
 }
 
