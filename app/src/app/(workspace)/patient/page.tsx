@@ -108,23 +108,6 @@ export default async function PatientViewPage({
 
         <div className="patient-view-side">
           <div className="card">
-            <h2>Why this matters</h2>
-            <ul className="plain-list">
-              <li>
-                <b>She never fills out an appeal form.</b> When insurance says no, the clinic&apos;s AI fights it — and
-                she just gets told it&apos;s handled.
-              </li>
-              <li>
-                <b>She never chases a follow-up.</b> After her visit, the appointment shows up already booked, and her
-                overdue screening gets scheduled in the same call.
-              </li>
-              <li>
-                <b>She hears &ldquo;you owe $0&rdquo;</b> instead of getting a surprise bill — because the claim was
-                appealed and won before it ever reached her.
-              </li>
-            </ul>
-          </div>
-          <div className="card">
             <h2>Try it live</h2>
             <p className="empty">
               From the Dashboard, tell the copilot <em>&ldquo;run discharge outreach&rdquo;</em> or <em>&ldquo;the
