@@ -9,6 +9,7 @@ import {
   UserPlus,
   Wallet,
 } from 'lucide-react';
+import Link from 'next/link';
 import { listPatients, patientTimeline, type TimelineEvent } from '@/lib/workspace.server';
 import { Stagger } from '@/components/anim';
 
@@ -43,11 +44,17 @@ function initials(name: string): string {
   return name.split(' ').map((w) => w[0]).slice(0, 2).join('');
 }
 
-export default async function PatientsPage() {
+export default async function PatientsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ p?: string }>;
+}) {
+  const { p } = await searchParams;
   const patients = await listPatients();
-  const hero = patients.find((p) => p.mrn === 'MRN-001234') ?? patients[0];
+  const hero =
+    patients.find((pt) => pt.id === p) ?? patients.find((pt) => pt.mrn === 'MRN-001234') ?? patients[0];
   const events = hero ? await patientTimeline(hero.id) : [];
-  const roster = patients.filter((p) => p.id !== hero?.id);
+  const roster = patients.filter((pt) => pt.id !== hero?.id);
 
   return (
     <>
@@ -132,18 +139,18 @@ export default async function PatientsPage() {
           <h2>Rest of the panel</h2>
           <Stagger signal={roster.length}>
             <div className="roster">
-              {roster.map((p) => (
-                <div key={p.id} className="roster-card">
-                  <span className="avatar avatar-sm">{initials(p.name)}</span>
+              {roster.map((pt) => (
+                <Link key={pt.id} href={`/patients?p=${pt.id}`} className="roster-card">
+                  <span className="avatar avatar-sm">{initials(pt.name)}</span>
                   <div className="roster-body">
-                    <div className="roster-name">{p.name}</div>
+                    <div className="roster-name">{pt.name}</div>
                     <div className="patient-meta">
-                      {p.mrn && <span>{p.mrn}</span>}
-                      {p.dob && <span>DOB {p.dob}</span>}
+                      {pt.mrn && <span>{pt.mrn}</span>}
+                      {pt.dob && <span>DOB {pt.dob}</span>}
                     </div>
-                    <div className="roster-payer">{p.payer ?? 'Self-pay'}</div>
+                    <div className="roster-payer">{pt.payer ?? 'Self-pay'}</div>
                   </div>
-                </div>
+                </Link>
               ))}
             </div>
           </Stagger>
