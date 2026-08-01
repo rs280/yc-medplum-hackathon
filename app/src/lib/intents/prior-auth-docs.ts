@@ -8,6 +8,7 @@ import {
   refOf,
   type IntentConfig,
 } from './shared';
+import { PRIOR_AUTH_DOCS_INSTRUCTION, PRIOR_AUTH_DOCS_SYSTEM_PROMPT } from './prompts/prior-auth-docs';
 
 export const priorAuthDocs: IntentConfig = {
   name: 'prior-auth-docs',
@@ -15,10 +16,8 @@ export const priorAuthDocs: IntentConfig = {
   taskCode: 'prior-auth-docs',
   artifactLabel: 'prior-auth packet',
   usePubMed: false,
-  systemPrompt:
-    'You are the prior-authorization agent of an autonomous healthcare back office. When an order needs prior authorization, you compile the documentation packet that satisfies the payer criteria on the first submission.',
-  instruction:
-    'Compile the prior-authorization packet for the order in the context. From the retrieved payer criteria, enumerate each required documentation element, map the available clinical facts to it, and flag anything missing — cite each criterion with a [MOSS:<id>] marker. Set decision to "docs-compiled". Put the packet cover letter (using placeholder tokens for member details) in `letter` and the criterion-to-evidence mapping in `keyArguments`.',
+  systemPrompt: PRIOR_AUTH_DOCS_SYSTEM_PROMPT,
+  instruction: PRIOR_AUTH_DOCS_INSTRUCTION,
   async buildContext(trigger, store) {
     const sr = trigger as ServiceRequest;
     const patientRef = sr.subject?.reference;

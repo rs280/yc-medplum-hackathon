@@ -13,6 +13,12 @@ import {
   statusSnapshot,
   type CopilotEvent,
 } from '@/lib/copilot.server';
+import {
+  describeForAgent,
+  describeForPanel,
+  readPatientDocument,
+  type AttachedImage,
+} from '@/lib/documentRedaction.server';
 import type { PipelineStepEvent } from '@/lib/pipeline';
 
 export const maxDuration = 300;
@@ -24,6 +30,9 @@ export const maxDuration = 300;
  * redacted/aggregate data; run_agent drives the real pipeline in-process.
  * Without an LLM key (OPENROUTER_API_KEY or ANTHROPIC_API_KEY) a keyword-router
  * fallback handles the same commands so the demo never blocks.
+ *
+ * An attached image is read once by the redaction pass before the agent loop
+ * starts; only the boxes and the extracted fields go forward, never the image.
  */
 
 interface ChatMessage {
@@ -32,6 +41,16 @@ interface ChatMessage {
 }
 
 type Emit = (event: Record<string, unknown>) => void;
+
+const IMAGE_MEDIA_TYPES: ReadonlyArray<AttachedImage['mediaType']> = [
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/gif',
+];
+
+// 12 MB of bytes, which base64 inflates by about a third.
+const MAX_BASE64_LENGTH = 17 * 1024 * 1024;
 
 const TOOLS: Anthropic.Tool[] = [
   {
@@ -205,6 +224,49 @@ async function executeTool(
   }
 }
 
+// ── Attached document: redaction pass, before anything else ─────────────────
+
+/**
+ * Runs the vision pass and streams it as a step the user can watch. Returns
+ * the note to append to their turn — empty when the read failed, so the agent
+ * loop proceeds knowing nothing rather than guessing at the card.
+ */
+async function readAttachment(
+  client: Anthropic | null,
+  model: string,
+  image: AttachedImage,
+  emit: Emit,
+): Promise<string> {
+  const step = { type: 'tool', id: 'doc', name: 'read_document', summary: 'redact attached document' };
+  emit({ ...step, status: 'running' });
+
+  if (!client) {
+    emit({ ...step, status: 'error', detail: 'reading documents needs an LLM key' });
+    return '';
+  }
+  try {
+    const reading = await readPatientDocument(client, model, image);
+    emit({
+      type: 'pipeline',
+      toolId: 'doc',
+      step: 'redact-document',
+      detail: `${reading.boxes.length} identifying region(s) covered`,
+      data: {
+        boxes: reading.boxes,
+        documentType: reading.documentType,
+        fields: describeForPanel(reading.fields),
+      },
+    });
+    emit({ ...step, status: 'done', detail: `${reading.documentType} · ${reading.boxes.length} region(s) boxed` });
+    return describeForAgent(reading);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn('[chat] document redaction pass failed:', err);
+    emit({ ...step, status: 'error', detail: `could not read the image — ${message}` });
+    return '';
+  }
+}
+
 // ── LLM-driven agent loop ───────────────────────────────────────────────────
 
 async function agentLoop(client: Anthropic, history: ChatMessage[], model: string, emit: Emit): Promise<void> {
@@ -333,16 +395,31 @@ async function fallbackChat(history: ChatMessage[], emit: Emit): Promise<void> {
 
 // ── Route ───────────────────────────────────────────────────────────────────
 
+interface ChatRequest {
+  messages?: ChatMessage[];
+  model?: string;
+  attachment?: { mediaType?: string; base64?: string };
+}
+
+/** Validate an uploaded image at the boundary; anything malformed is dropped, not trusted. */
+function parseAttachment(raw: ChatRequest['attachment']): AttachedImage | null {
+  if (!raw || typeof raw.base64 !== 'string' || !raw.base64) return null;
+  const mediaType = IMAGE_MEDIA_TYPES.find((type) => type === raw.mediaType);
+  if (!mediaType || raw.base64.length > MAX_BASE64_LENGTH) return null;
+  return { mediaType, base64: raw.base64 };
+}
+
 export async function POST(req: NextRequest): Promise<Response> {
-  let body: { messages?: ChatMessage[]; model?: string };
+  let body: ChatRequest;
   try {
-    body = (await req.json()) as { messages?: ChatMessage[]; model?: string };
+    body = (await req.json()) as ChatRequest;
   } catch {
     return NextResponse.json({ error: 'body is not JSON' }, { status: 400 });
   }
   const history = (body.messages ?? []).filter((m) => m && typeof m.content === 'string').slice(-20);
   if (history.length === 0) return NextResponse.json({ error: 'messages required' }, { status: 400 });
   const model = resolveChatModel(typeof body.model === 'string' ? body.model : undefined);
+  const attachment = parseAttachment(body.attachment);
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
@@ -350,6 +427,11 @@ export async function POST(req: NextRequest): Promise<Response> {
       const emit: Emit = (event) => controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
       try {
         const client = getLlmClient();
+        if (attachment) {
+          const note = await readAttachment(client, model, attachment, emit);
+          const last = history[history.length - 1];
+          if (note && last) last.content = `${last.content}\n\n${note}`.trim();
+        }
         if (client) {
           try {
             await agentLoop(client, history, model, emit);

@@ -12,6 +12,7 @@ import {
   Dot,
   Lock,
   Mic,
+  Paperclip,
   RefreshCcw,
   Search,
   Sparkles,
@@ -19,11 +20,13 @@ import {
   Unlock,
   Volume2,
   VolumeX,
+  X,
   Zap,
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { renderRedacted } from '@/components/Redacted';
+import { drawRedactedImage, loadAttachment, type ImageAttachment, type PhiBox } from '@/lib/chatImage';
 import type { ChatModelOption } from '@/lib/models';
 
 /**
@@ -54,6 +57,7 @@ interface Msg {
   role: 'user' | 'assistant';
   text: string;
   steps: Step[];
+  attachmentName?: string;
 }
 
 const SUGGESTIONS = [
@@ -69,6 +73,7 @@ const STEP_ICONS: Record<Step['status'], string> = { running: '◌', done: '✓'
 
 const TRACE_META: Array<{ match: (s: string) => boolean; Icon: typeof Lock; label: string }> = [
   { match: (s) => s.startsWith('parse-intent'), Icon: Crosshair, label: 'what happened' },
+  { match: (s) => s === 'redact-document', Icon: Lock, label: 'covering up the document' },
   { match: (s) => s === 'redact', Icon: Lock, label: 'hiding patient identity' },
   { match: (s) => s === 'retrieve', Icon: Search, label: 'reading the rules & research' },
   { match: (s) => s === 'reason', Icon: BrainCircuit, label: 'writing the response' },
@@ -92,6 +97,26 @@ function TraceEntry({ t }: { t: PipelineTrace }) {
         <span className="trace-label">{label}</span>
         <span className="trace-detail">{t.detail}</span>
       </div>
+      {/* The redacted render of an attached document — composited in the browser,
+          so this is the only copy of it that ever existed in the transcript. */}
+      {typeof data.redactedImage === 'string' && (
+        <figure className="trace-image">
+          <img
+            src={data.redactedImage}
+            alt={`Attached ${typeof data.documentType === 'string' ? data.documentType : 'document'}, blurred with identifying details blacked out`}
+          />
+          <figcaption>page blurred, identifiers boxed — the original was never kept</figcaption>
+        </figure>
+      )}
+      {Array.isArray(data.fields) && data.fields.length > 0 && (
+        <div className="trace-chips">
+          {(data.fields as string[]).map((f) => (
+            <span key={f} className="trace-chip">
+              {f}
+            </span>
+          ))}
+        </div>
+      )}
       {Array.isArray(data.sources) && data.sources.length > 0 && (
         <div className="trace-chips">
           {(data.sources as Array<{ id: string; title: string }>).map((s) => (
@@ -223,8 +248,13 @@ export function Copilot({ models, defaultModel }: CopilotProps) {
   const [listening, setListening] = useState(false);
   const [voiceReplies, setVoiceReplies] = useState(false);
   const [voiceSupported, setVoiceSupported] = useState(false);
+  const [attachment, setAttachment] = useState<ImageAttachment | null>(null);
+  const [attachError, setAttachError] = useState('');
   const modelRef = useRef(model);
   modelRef.current = model;
+  const attachmentRef = useRef<ImageAttachment | null>(null);
+  attachmentRef.current = attachment;
+  const fileRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const logRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<any>(null);
@@ -266,15 +296,24 @@ export function Copilot({ models, defaultModel }: CopilotProps) {
   const send = useCallback(
     async (raw?: string) => {
       const text = (raw ?? inputRef.current?.value ?? '').trim();
-      if (!text || busy) return;
+      // The document is the message when someone just attaches a card and hits send.
+      const pending = attachmentRef.current;
+      if ((!text && !pending) || busy) return;
       setInput('');
+      setAttachment(null);
+      setAttachError('');
       setBusy(true);
 
+      const prompt = text || 'Here is my insurance card.';
       const history = [
         ...messagesRef.current.filter((m) => m.text || m.steps.length).map((m) => ({ role: m.role, content: m.text || '(ran tools)' })),
-        { role: 'user' as const, content: text },
+        { role: 'user' as const, content: prompt },
       ];
-      setMessages((prev) => [...prev, { role: 'user', text, steps: [] }, { role: 'assistant', text: '', steps: [] }]);
+      setMessages((prev) => [
+        ...prev,
+        { role: 'user', text: prompt, steps: [], attachmentName: pending?.fileName },
+        { role: 'assistant', text: '', steps: [] },
+      ]);
 
       const patchAssistant = (fn: (m: Msg) => Msg) =>
         setMessages((prev) => {
@@ -287,7 +326,11 @@ export function Copilot({ models, defaultModel }: CopilotProps) {
         const res = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ messages: history, model: modelRef.current }),
+          body: JSON.stringify({
+            messages: history,
+            model: modelRef.current,
+            attachment: pending ? { mediaType: pending.mediaType, base64: pending.base64 } : undefined,
+          }),
         });
         if (!res.ok || !res.body) throw new Error(`copilot request failed (${res.status})`);
 
@@ -324,11 +367,21 @@ export function Copilot({ models, defaultModel }: CopilotProps) {
               });
               if (event.refresh) router.refresh();
             } else if (event.type === 'pipeline') {
+              let data = event.data as Record<string, unknown> | undefined;
+              // Boxes arrive as coordinates; the pixels are covered here, against
+              // the local original, which is then dropped with `pending`.
+              if (event.step === 'redact-document' && pending && Array.isArray(data?.boxes)) {
+                try {
+                  data = { ...data, redactedImage: await drawRedactedImage(pending.dataUrl, data.boxes as PhiBox[]) };
+                } catch (err) {
+                  console.warn('[copilot] could not render the redacted document:', err);
+                }
+              }
               patchAssistant((m) => {
                 const steps = [...m.steps];
                 const i = steps.findIndex((s) => s.id === event.toolId);
                 if (i < 0) return m;
-                steps[i] = { ...steps[i], trace: [...steps[i].trace, { step: event.step, detail: event.detail, data: event.data }] };
+                steps[i] = { ...steps[i], trace: [...steps[i].trace, { step: event.step, detail: event.detail, data }] };
                 return { ...m, steps };
               });
             } else if (event.type === 'error') {
@@ -346,6 +399,18 @@ export function Copilot({ models, defaultModel }: CopilotProps) {
     },
     [busy, router, speak],
   );
+
+  // Normalizes the picked file locally; nothing is uploaded until send.
+  const pickAttachment = useCallback(async (file: File | undefined) => {
+    if (!file) return;
+    setAttachError('');
+    try {
+      setAttachment(await loadAttachment(file));
+    } catch (err) {
+      setAttachment(null);
+      setAttachError(err instanceof Error ? err.message : 'That file could not be attached.');
+    }
+  }, []);
 
   const toggleMic = useCallback(() => {
     const w = window as any;
@@ -481,6 +546,11 @@ export function Copilot({ models, defaultModel }: CopilotProps) {
                 ))}
               </div>
             )}
+            {m.attachmentName && (
+              <div className="msg-attachment">
+                <Paperclip size={11} aria-hidden /> {m.attachmentName}
+              </div>
+            )}
             {m.text && <div className="bubble">{renderRedacted(m.text)}</div>}
             {m.role === 'assistant' && !m.text && m.steps.length === 0 && busy && i === messages.length - 1 && (
               <div className="bubble thinking">
@@ -491,7 +561,45 @@ export function Copilot({ models, defaultModel }: CopilotProps) {
         ))}
       </div>
 
+      {(attachment || attachError) && (
+        <div className="attach-row">
+          {attachment && (
+            <span className="attach-chip">
+              <Paperclip size={12} aria-hidden />
+              <span className="attach-name">{attachment.fileName}</span>
+              <button onClick={() => setAttachment(null)} title="Remove attachment" aria-label="Remove attachment">
+                <X size={12} aria-hidden />
+              </button>
+            </span>
+          )}
+          {attachError ? (
+            <span className="attach-error">{attachError}</span>
+          ) : (
+            <span className="attach-note">blurred and boxed before it reaches the chat</span>
+          )}
+        </div>
+      )}
+
       <div className="composer">
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/gif"
+          hidden
+          onChange={(e) => {
+            void pickAttachment(e.target.files?.[0]);
+            e.target.value = '';
+          }}
+        />
+        <button
+          className={`attach-btn ${attachment ? 'active' : ''}`}
+          onClick={() => fileRef.current?.click()}
+          disabled={busy}
+          title="Attach a patient document"
+          aria-label="Attach a patient document"
+        >
+          <Paperclip size={15} aria-hidden />
+        </button>
         {voiceSupported && (
           <button
             className={`mic-btn ${listening ? 'listening' : ''}`}
@@ -507,7 +615,9 @@ export function Copilot({ models, defaultModel }: CopilotProps) {
           ref={inputRef}
           value={input}
           rows={1}
-          placeholder={listening ? 'Listening…' : 'Ask or tell the back office… (⌘K)'}
+          placeholder={
+            listening ? 'Listening…' : attachment ? 'Add a note, or just send the document…' : 'Ask or tell the back office… (⌘K)'
+          }
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
@@ -517,7 +627,13 @@ export function Copilot({ models, defaultModel }: CopilotProps) {
           }}
           disabled={busy && !listening}
         />
-        <button className="send-btn" onClick={() => send()} disabled={busy || !input.trim()} title="Send" aria-label="Send message">
+        <button
+          className="send-btn"
+          onClick={() => send()}
+          disabled={busy || (!input.trim() && !attachment)}
+          title="Send"
+          aria-label="Send message"
+        >
           <ArrowUp size={15} strokeWidth={2.4} aria-hidden />
         </button>
       </div>

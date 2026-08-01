@@ -32,7 +32,9 @@ export interface IntentConfig {
   taskCode: string;
   artifactLabel: string;
   usePubMed: boolean;
+  /** Agent persona and standing rules; reason.ts appends GLOBAL_RULES. Lives in ./prompts/<name>.ts. */
   systemPrompt: string;
+  /** Per-run task directive sent as the TASK block. Lives in ./prompts/<name>.ts. */
   instruction: string;
   buildContext(trigger: Resource, store: FhirStore): Promise<IntentContext>;
 }

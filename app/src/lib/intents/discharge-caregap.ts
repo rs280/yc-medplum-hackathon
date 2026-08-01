@@ -1,6 +1,7 @@
 import 'server-only';
 import type { Encounter, Patient, ServiceRequest } from '@medplum/fhirtypes';
 import { displayOf, phoneOf, readRef, refOf, type IntentConfig } from './shared';
+import { DISCHARGE_CAREGAP_INSTRUCTION, DISCHARGE_CAREGAP_SYSTEM_PROMPT } from './prompts/discharge-caregap';
 
 export const dischargeCaregap: IntentConfig = {
   name: 'discharge-caregap',
@@ -8,10 +9,8 @@ export const dischargeCaregap: IntentConfig = {
   taskCode: 'discharge-caregap',
   artifactLabel: 'outreach message',
   usePubMed: false,
-  systemPrompt:
-    'You are the discharge-coordination agent of an autonomous healthcare back office. After a patient is discharged you plan the follow-up outreach, screen for red-flag symptoms per protocol, and close overdue preventive care gaps in the same touch.',
-  instruction:
-    'Plan the post-discharge outreach for the encounter in the context. From the retrieved protocol, list the red-flag symptoms to screen for (cite with [MOSS:<id>]), propose the follow-up window, and address EVERY overdue preventive-care gap listed. Set decision to "outreach-planned". Put the patient-facing outreach message (max ~450 characters, warm and plain-language, using the placeholder tokens for the patient name) in `letter`; put the red flags and gap plan in `keyArguments`.',
+  systemPrompt: DISCHARGE_CAREGAP_SYSTEM_PROMPT,
+  instruction: DISCHARGE_CAREGAP_INSTRUCTION,
   async buildContext(trigger, store) {
     const encounter = trigger as Encounter;
     const patientRef = encounter.subject?.reference;

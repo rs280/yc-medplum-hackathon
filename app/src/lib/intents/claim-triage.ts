@@ -9,6 +9,7 @@ import {
   refOf,
   type IntentConfig,
 } from './shared';
+import { CLAIM_TRIAGE_INSTRUCTION, CLAIM_TRIAGE_SYSTEM_PROMPT } from './prompts/claim-triage';
 
 export const claimTriage: IntentConfig = {
   name: 'claim-triage',
@@ -16,10 +17,8 @@ export const claimTriage: IntentConfig = {
   taskCode: 'claim-triage',
   artifactLabel: 'triage summary',
   usePubMed: false,
-  systemPrompt:
-    'You are the claim-triage agent of an autonomous healthcare back office. You review claims against payer coverage criteria BEFORE submission so they go out clean and never get denied.',
-  instruction:
-    'Check the claim in the context against the retrieved payer criteria. Identify every gap that would trigger a denial (missing prior authorization, missing documentation, diagnosis/procedure mismatch), state the concrete fix for each, and cite the criterion with a [MOSS:<id>] marker. Set decision to "submit-clean" if there are no gaps, otherwise "fix-then-submit". Put a short triage summary (gaps found, fixes applied, submission readiness) in `letter` and each gap-fix pair in `keyArguments`.',
+  systemPrompt: CLAIM_TRIAGE_SYSTEM_PROMPT,
+  instruction: CLAIM_TRIAGE_INSTRUCTION,
   async buildContext(trigger, store) {
     const claim = trigger as Claim;
     const patientRef = claim.patient?.reference;
