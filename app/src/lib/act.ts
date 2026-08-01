@@ -3,6 +3,7 @@ import type { DocumentReference, ServiceRequest } from '@medplum/fhirtypes';
 import type { FhirStore } from './medplum.server';
 import { bookAppointment } from './appointments.server';
 import type { IntentConfig, IntentContext } from './intents/shared';
+import { schedulePayerApproval } from './payerSimulator.server';
 import type { ReasonOutput } from './reason';
 import { checkEligibility, sendAttachment275, submitClaim837, submitPriorAuth278 } from './stedi.server';
 
@@ -53,6 +54,12 @@ export async function act(
         action: 'edi-837-resubmission',
         detail: `Replacement claim (frequency 7) queued (control ${resubmit.controlNumber})`,
         simulated: resubmit.simulated,
+      });
+      schedulePayerApproval(store, ctx.claimRef, ctx.meta.payer ?? 'the payer');
+      actions.push({
+        action: 'payer-adjudication-pending',
+        detail: 'Payer received the appeal — adjudication expected in ~45s',
+        simulated: true,
       });
       break;
     }
