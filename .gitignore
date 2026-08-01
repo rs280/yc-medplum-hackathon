@@ -4,5 +4,6 @@ dist/
 .env.*
 !.env.example
 graphify-out/
+.claude/
 .DS_Store
 *.log
