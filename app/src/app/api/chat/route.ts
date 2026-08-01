@@ -16,6 +16,7 @@ import {
   checkCoverage,
   completeVisit,
   DENIAL_TEXTS,
+  orderScan,
   fireEvent,
   latestArtifact,
   recentRuns,
@@ -181,6 +182,21 @@ const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name: 'order_scan',
+    description:
+      'Place a NEW imaging order (MRI, CT, X-ray…) for a registered patient and immediately compile + submit its prior-auth packet through the full pipeline. Use this when the user wants to order a scan for a specific patient — run_agent prior-auth only re-fires the seeded demo order.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        patientName: { type: 'string' },
+        procedure: { type: 'string', description: 'e.g. "CT abdomen with contrast" (default: MRI lumbar spine)' },
+        reason: { type: 'string', description: 'Clinical indication in the clinician’s words, e.g. "chronic back pain, failed 6 weeks PT"' },
+      },
+      required: ['patientName'],
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'complete_visit',
     description:
       'Front desk checkout: end the patient’s visit. Marks their appointment fulfilled, records the finished encounter (which fires the discharge agent: post-visit outreach + follow-up booking through the full pipeline), and drafts the visit claim. Returns the claim identifier — always tell the user and reuse it for later run_agent calls on their claim.',
@@ -312,6 +328,17 @@ async function executeTool(
       });
       return { result: r.summary, refresh: true, detail: r.summary };
     }
+    case 'order_scan': {
+      const r = await orderScan(
+        {
+          patientName: String(input.patientName),
+          procedure: typeof input.procedure === 'string' ? input.procedure : undefined,
+          reason: typeof input.reason === 'string' ? input.reason : undefined,
+        },
+        onPipelineStep,
+      );
+      return { result: r.summary, refresh: true, detail: r.summary };
+    }
     case 'complete_visit': {
       const r = await completeVisit(
         {
@@ -423,7 +450,7 @@ async function agentLoop(client: Anthropic, history: ChatMessage[], model: strin
       emit({ type: 'tool', id, name: block.name, summary, status: 'running' });
       try {
         const onPipelineStep =
-          block.name === 'run_agent' || block.name === 'complete_visit'
+          block.name === 'run_agent' || block.name === 'complete_visit' || block.name === 'order_scan'
             ? (pe: PipelineStepEvent) => emit({ type: 'pipeline', toolId: id, step: pe.step, detail: pe.detail, data: pe.data })
             : undefined;
         const { result, refresh, detail } = await executeTool(block.name, input, onPipelineStep);

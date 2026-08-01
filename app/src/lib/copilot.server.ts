@@ -243,6 +243,43 @@ export async function checkCoverage(patientName: string): Promise<{ summary: str
   };
 }
 
+/** Nearest CPT family the demo's payer-policy corpus covers — parse-intent gates prior-auth on these. */
+function inferImagingCpt(procedure: string): string {
+  const p = procedure.toLowerCase();
+  if (/(abdomen|abdominal|pelvis)/.test(p)) return '74177'; // CT abdomen/pelvis
+  if (/(brain|head)/.test(p)) return '70553'; // MRI brain
+  return '72148'; // MRI lumbar spine (default imaging family)
+}
+
+/** Place a new imaging order for a registered patient and immediately run the prior-auth agent on it. */
+export async function orderScan(
+  opts: { patientName: string; procedure?: string; reason?: string },
+  onStep?: (event: PipelineStepEvent) => void,
+): Promise<FireResult> {
+  const store = await getStore();
+  const patient = await findPatientByName(store, opts.patientName);
+  if (!patient) throw new Error(`No patient named '${opts.patientName}' — register them first`);
+  const procedure = opts.procedure?.trim() || 'MRI lumbar spine without contrast';
+  const sr = await store.create<ServiceRequest>({
+    resourceType: 'ServiceRequest',
+    identifier: [{ system: IDS, value: `SR-${shortId()}` }],
+    status: 'active',
+    intent: 'order',
+    subject: { reference: `Patient/${patient.id}` },
+    code: {
+      coding: [{ system: 'http://www.ama-assn.org/go/cpt', code: inferImagingCpt(procedure), display: procedure }],
+      text: procedure,
+    },
+    authoredOn: new Date().toISOString(),
+    note: opts.reason ? [{ text: opts.reason }] : undefined,
+  });
+  const pipeline = await runPipeline(sr, onStep);
+  return {
+    summary: `${procedure} ordered for ${patientDisplayName(patient)} → prior-auth ${pipeline.status}: ${pipeline.detail ?? ''}`,
+    pipeline,
+  };
+}
+
 
 /**
  * AI checkout: ends the visit. Marks the booked appointment fulfilled, writes

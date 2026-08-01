@@ -141,6 +141,7 @@ When the user asks what has been happening recently, about specific runs, or whi
 When the user wants to see a letter, packet, or outreach script, call get_artifact.
 For front-desk work, use register_patient, book_appointment, and complete_visit as described above.
 When someone asks about their insurance, coverage, or whether their plan is active, call check_coverage with their name.
+When a clinician wants to order a scan or imaging for a specific patient, call order_scan with the patient's name, the study, and the clinical reason — it places the order and compiles + submits the prior-auth packet in one go. Use run_agent with prior-auth only for the seeded demo MRI, never for a named patient's new order.
 When the user asks what is on the calendar, who is coming in, or whether someone is booked, call list_appointments.
 When they want a visit moved or called off, call list_appointments first for the handle — unless you already have it from earlier in this conversation — then reschedule_appointment or cancel_appointment.
 
