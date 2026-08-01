@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { CalendarDays, LayoutDashboard, Receipt, Smartphone, Sparkles, Users } from 'lucide-react';
+import { CalendarDays, LayoutDashboard, Plug, Receipt, Smartphone, Sparkles, Users } from 'lucide-react';
 
 /**
  * Primary navigation, mapped to the patient journey the agents automate:
@@ -16,6 +16,7 @@ const NAV = [
   { href: '/schedule', label: 'Schedule', sub: 'visits & follow-ups', icon: CalendarDays },
   { href: '/claims', label: 'Claims', sub: 'insurance & billing', icon: Receipt },
   { href: '/patient', label: 'Patient view', sub: 'what Maria sees', icon: Smartphone },
+  { href: '/integrations', label: 'Integrations', sub: 'connected services', icon: Plug },
 ];
 
 export function Sidebar() {

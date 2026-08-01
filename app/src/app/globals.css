@@ -1763,6 +1763,122 @@ tbody tr:hover {
   margin-top: 3px;
 }
 
+/* ── Integrations ───────────────────────────────────────────────────────── */
+.integration-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(268px, 1fr));
+  gap: 10px;
+}
+.integration-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 13px;
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.integration-card.enabled {
+  border-color: rgba(8, 145, 178, 0.35);
+  background: var(--accent-soft);
+}
+.integration-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.integration-name {
+  font-size: 13.5px;
+  font-weight: 650;
+  color: var(--ink);
+}
+.integration-desc {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ink-2);
+  margin: 0;
+  flex: 1;
+}
+.integration-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.integration-env {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 130px;
+}
+.integration-docs {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent-strong);
+  text-decoration: none;
+}
+.integration-docs:hover {
+  text-decoration: underline;
+}
+
+/* Switch: the one control on this page, so it carries the accent. */
+.integration-switch-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.integration-switch {
+  position: relative;
+  width: 34px;
+  height: 19px;
+  flex: none;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--track);
+  cursor: pointer;
+  padding: 0;
+  transition: background 0.16s ease, border-color 0.16s ease;
+}
+.integration-switch.on {
+  background: var(--accent);
+  border-color: var(--accent-strong);
+}
+.integration-switch.pending {
+  opacity: 0.6;
+}
+.integration-switch:focus-visible {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 2px;
+}
+.integration-switch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  transition: transform 0.16s ease;
+}
+.integration-switch.on .integration-switch-knob {
+  transform: translateX(15px);
+}
+.integration-switch-error {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--critical);
+}
+
 /* ── Responsive ─────────────────────────────────────────────────────────── */
 @media (max-width: 1180px) {
   .board {
