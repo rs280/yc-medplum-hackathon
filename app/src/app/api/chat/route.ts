@@ -8,6 +8,7 @@ import {
   statusSnapshot,
   type CopilotEvent,
 } from '@/lib/copilot.server';
+import type { PipelineStepEvent } from '@/lib/pipeline';
 
 export const maxDuration = 300;
 
@@ -95,7 +96,11 @@ const EVENT_LABELS: Record<CopilotEvent, string> = {
   'prior-auth': 'prior-auth packet',
 };
 
-async function executeTool(name: string, input: Record<string, unknown>): Promise<{ result: string; refresh: boolean; detail: string }> {
+async function executeTool(
+  name: string,
+  input: Record<string, unknown>,
+  onPipelineStep?: (event: PipelineStepEvent) => void,
+): Promise<{ result: string; refresh: boolean; detail: string }> {
   switch (name) {
     case 'get_status': {
       const snap = await statusSnapshot();
@@ -115,10 +120,14 @@ async function executeTool(name: string, input: Record<string, unknown>): Promis
     }
     case 'run_agent': {
       const event = input.event as CopilotEvent;
-      const fired = await fireEvent(event, {
-        claimIdentifier: typeof input.claimIdentifier === 'string' ? input.claimIdentifier : undefined,
-        denialCode: typeof input.denialCode === 'string' ? input.denialCode : undefined,
-      });
+      const fired = await fireEvent(
+        event,
+        {
+          claimIdentifier: typeof input.claimIdentifier === 'string' ? input.claimIdentifier : undefined,
+          denialCode: typeof input.denialCode === 'string' ? input.denialCode : undefined,
+        },
+        onPipelineStep,
+      );
       return { result: fired.summary, refresh: true, detail: fired.summary };
     }
     default:
@@ -173,7 +182,11 @@ async function agentLoop(client: Anthropic, history: ChatMessage[], emit: Emit):
           : block.name.replace(/_/g, ' ');
       emit({ type: 'tool', id, name: block.name, summary, status: 'running' });
       try {
-        const { result, refresh, detail } = await executeTool(block.name, input);
+        const onPipelineStep =
+          block.name === 'run_agent'
+            ? (pe: PipelineStepEvent) => emit({ type: 'pipeline', toolId: id, step: pe.step, detail: pe.detail, data: pe.data })
+            : undefined;
+        const { result, refresh, detail } = await executeTool(block.name, input, onPipelineStep);
         emit({ type: 'tool', id, name: block.name, summary, status: 'done', detail, refresh });
         toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: result });
       } catch (err) {
@@ -202,7 +215,9 @@ async function fallbackChat(history: ChatMessage[], emit: Emit): Promise<void> {
   const runTool = async (event: CopilotEvent, summary: string) => {
     emit({ type: 'tool', id: 'f1', name: 'run_agent', summary, status: 'running' });
     try {
-      const fired = await fireEvent(event, { claimIdentifier: claim, denialCode: code });
+      const fired = await fireEvent(event, { claimIdentifier: claim, denialCode: code }, (pe) =>
+        emit({ type: 'pipeline', toolId: 'f1', step: pe.step, detail: pe.detail, data: pe.data }),
+      );
       emit({ type: 'tool', id: 'f1', name: 'run_agent', summary, status: 'done', detail: fired.summary, refresh: true });
       emit({ type: 'text', text: `Done. ${fired.summary}` });
     } catch (err) {

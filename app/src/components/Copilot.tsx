@@ -1,14 +1,41 @@
 'use client';
 
+import {
+  ArrowUp,
+  BookOpenCheck,
+  BrainCircuit,
+  Crosshair,
+  Dot,
+  Lock,
+  Mic,
+  RefreshCcw,
+  Search,
+  Sparkles,
+  Square,
+  Unlock,
+  Volume2,
+  VolumeX,
+  X,
+  Zap,
+} from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { renderRedacted } from '@/components/Redacted';
 
 /**
  * Back-office copilot panel: Cursor-style side chat for clinicians and
- * front-desk staff. Streams NDJSON from /api/chat, renders tool steps as
- * they run, refreshes the dashboard when an agent fires, and supports voice
- * in (Web Speech API) + optional voice out (speechSynthesis).
+ * front-desk staff. Streams NDJSON from /api/chat and renders the pipeline's
+ * real internal steps live (redaction counts, retrieved sources, the actual
+ * reasoning, actions taken) — not just a "done" chip — so the audience sees
+ * the agent work, not a result. Refreshes the dashboard when an agent fires;
+ * supports voice in (Web Speech API) + optional voice out (speechSynthesis).
  */
+
+interface PipelineTrace {
+  step: string;
+  detail: string;
+  data?: Record<string, unknown>;
+}
 
 interface Step {
   id: string;
@@ -16,6 +43,7 @@ interface Step {
   summary: string;
   status: 'running' | 'done' | 'error';
   detail?: string;
+  trace: PipelineTrace[];
 }
 
 interface Msg {
@@ -34,6 +62,67 @@ const SUGGESTIONS = [
 ];
 
 const STEP_ICONS: Record<Step['status'], string> = { running: '◌', done: '✓', error: '!' };
+
+const TRACE_META: Array<{ match: (s: string) => boolean; Icon: typeof Lock; label: string }> = [
+  { match: (s) => s.startsWith('parse-intent'), Icon: Crosshair, label: 'trigger' },
+  { match: (s) => s === 'redact', Icon: Lock, label: 'redact PHI' },
+  { match: (s) => s === 'retrieve', Icon: Search, label: 'retrieve evidence' },
+  { match: (s) => s === 'reason', Icon: BrainCircuit, label: 'reason' },
+  { match: (s) => s === 'de-redact', Icon: Unlock, label: 'de-redact' },
+  { match: (s) => s === 'act', Icon: Zap, label: 'act' },
+  { match: (s) => s === 'learn', Icon: BookOpenCheck, label: 'learn' },
+  { match: (s) => s === 'feedback', Icon: RefreshCcw, label: 'feedback' },
+];
+
+function traceMeta(step: string): { Icon: typeof Lock; label: string } {
+  return TRACE_META.find((m) => m.match(step)) ?? { Icon: Dot, label: step };
+}
+
+function TraceEntry({ t }: { t: PipelineTrace }) {
+  const { Icon, label } = traceMeta(t.step);
+  const data = t.data ?? {};
+  return (
+    <div className="trace-entry">
+      <div className="trace-head">
+        <Icon className="trace-svg" size={13} strokeWidth={2.1} aria-hidden />
+        <span className="trace-label">{label}</span>
+        <span className="trace-detail">{t.detail}</span>
+      </div>
+      {Array.isArray(data.sources) && data.sources.length > 0 && (
+        <div className="trace-chips">
+          {(data.sources as Array<{ id: string; title: string }>).map((s) => (
+            <span key={s.id} className="trace-chip" title={s.id}>
+              {s.title}
+            </span>
+          ))}
+        </div>
+      )}
+      {typeof data.rationale === 'string' && data.rationale && (
+        <div className="trace-text">{renderRedacted(data.rationale)}</div>
+      )}
+      {Array.isArray(data.keyArguments) && data.keyArguments.length > 0 && (
+        <ul className="trace-list">
+          {(data.keyArguments as string[]).map((a, i) => (
+            <li key={i}>{renderRedacted(a)}</li>
+          ))}
+        </ul>
+      )}
+      {typeof data.letterRedacted === 'string' && data.letterRedacted && (
+        <pre className="trace-artifact">{renderRedacted(data.letterRedacted)}</pre>
+      )}
+      {Array.isArray(data.actions) && data.actions.length > 0 && (
+        <div className="trace-chips">
+          {(data.actions as Array<{ action: string; simulated?: boolean }>).map((a, i) => (
+            <span key={i} className="trace-chip">
+              {a.action}
+              {a.simulated ? ' (sim)' : ''}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function Copilot() {
   const router = useRouter();
@@ -135,12 +224,21 @@ export function Copilot() {
               patchAssistant((m) => {
                 const steps = [...m.steps];
                 const i = steps.findIndex((s) => s.id === event.id);
-                const step: Step = { id: event.id, name: event.name, summary: event.summary ?? steps[i]?.summary ?? event.name, status: event.status, detail: event.detail };
-                if (i >= 0) steps[i] = { ...steps[i], ...step };
+                const base: Step = i >= 0 ? steps[i] : { id: event.id, name: event.name, summary: event.summary ?? event.name, status: event.status, trace: [] };
+                const step: Step = { ...base, name: event.name, summary: event.summary ?? base.summary, status: event.status, detail: event.detail };
+                if (i >= 0) steps[i] = step;
                 else steps.push(step);
                 return { ...m, steps };
               });
               if (event.refresh) router.refresh();
+            } else if (event.type === 'pipeline') {
+              patchAssistant((m) => {
+                const steps = [...m.steps];
+                const i = steps.findIndex((s) => s.id === event.toolId);
+                if (i < 0) return m;
+                steps[i] = { ...steps[i], trace: [...steps[i].trace, { step: event.step, detail: event.detail, data: event.data }] };
+                return { ...m, steps };
+              });
             } else if (event.type === 'error') {
               patchAssistant((m) => ({ ...m, text: m.text ? `${m.text}\n\nError: ${event.message}` : `Error: ${event.message}` }));
             }
@@ -195,7 +293,7 @@ export function Copilot() {
   if (!open) {
     return (
       <button className="copilot-fab" onClick={() => setOpen(true)} title="Open copilot (⌘K)">
-        ✦ Copilot
+        <Sparkles size={14} aria-hidden /> Copilot
       </button>
     );
   }
@@ -204,7 +302,9 @@ export function Copilot() {
     <aside className="copilot">
       <div className="copilot-head">
         <div>
-          <div className="copilot-title">✦ Copilot</div>
+          <div className="copilot-title">
+            <Sparkles size={14} aria-hidden /> Copilot
+          </div>
           <div className="copilot-sub">voice + chat · runs the agents for you</div>
         </div>
         <div className="copilot-head-actions">
@@ -215,11 +315,12 @@ export function Copilot() {
               setVoiceReplies((v) => !v);
             }}
             title={voiceReplies ? 'Voice replies on' : 'Voice replies off'}
+            aria-label={voiceReplies ? 'Turn voice replies off' : 'Turn voice replies on'}
           >
-            {voiceReplies ? '🔊' : '🔇'}
+            {voiceReplies ? <Volume2 size={15} aria-hidden /> : <VolumeX size={15} aria-hidden />}
           </button>
-          <button className="icon-btn" onClick={() => setOpen(false)} title="Collapse">
-            ✕
+          <button className="icon-btn" onClick={() => setOpen(false)} title="Collapse" aria-label="Collapse copilot">
+            <X size={15} aria-hidden />
           </button>
         </div>
       </div>
@@ -245,15 +346,24 @@ export function Copilot() {
             {m.steps.length > 0 && (
               <div className="steps">
                 {m.steps.map((s) => (
-                  <div key={s.id} className={`step ${s.status}`} title={s.detail}>
-                    <span className="step-icon">{STEP_ICONS[s.status]}</span>
-                    <span className="step-name">{s.name === 'run_agent' ? 'run agent' : s.name.replace(/_/g, ' ')}</span>
-                    <span className="step-summary">{s.summary}</span>
+                  <div key={s.id} className={`step-block ${s.status}`}>
+                    <div className="step" title={s.detail}>
+                      <span className="step-icon">{STEP_ICONS[s.status]}</span>
+                      <span className="step-name">{s.name === 'run_agent' ? 'run agent' : s.name.replace(/_/g, ' ')}</span>
+                      <span className="step-summary">{s.summary}</span>
+                    </div>
+                    {s.trace.length > 0 && (
+                      <div className="trace">
+                        {s.trace.map((t, ti) => (
+                          <TraceEntry key={ti} t={t} />
+                        ))}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
             )}
-            {m.text && <div className="bubble">{m.text}</div>}
+            {m.text && <div className="bubble">{renderRedacted(m.text)}</div>}
             {m.role === 'assistant' && !m.text && m.steps.length === 0 && busy && i === messages.length - 1 && (
               <div className="bubble thinking">
                 <span className="pulse-dot" /> thinking…
@@ -265,8 +375,14 @@ export function Copilot() {
 
       <div className="composer">
         {voiceSupported && (
-          <button className={`mic-btn ${listening ? 'listening' : ''}`} onClick={toggleMic} disabled={busy} title={listening ? 'Stop listening' : 'Speak'}>
-            {listening ? '●' : '🎙'}
+          <button
+            className={`mic-btn ${listening ? 'listening' : ''}`}
+            onClick={toggleMic}
+            disabled={busy}
+            title={listening ? 'Stop listening' : 'Speak'}
+            aria-label={listening ? 'Stop listening' : 'Speak to the copilot'}
+          >
+            {listening ? <Square size={13} aria-hidden /> : <Mic size={15} aria-hidden />}
           </button>
         )}
         <textarea
@@ -283,8 +399,8 @@ export function Copilot() {
           }}
           disabled={busy && !listening}
         />
-        <button className="send-btn" onClick={() => send()} disabled={busy || !input.trim()} title="Send">
-          ↑
+        <button className="send-btn" onClick={() => send()} disabled={busy || !input.trim()} title="Send" aria-label="Send message">
+          <ArrowUp size={15} strokeWidth={2.4} aria-hidden />
         </button>
       </div>
     </aside>

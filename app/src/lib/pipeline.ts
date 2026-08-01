@@ -33,14 +33,31 @@ export interface PipelineResult {
   taskId?: string;
 }
 
+/**
+ * Live progress events emitted as the pipeline actually runs, for surfaces
+ * (the copilot, the dashboard) that want to show the work happening rather
+ * than just the final result. `data` is always PHI-free: redacted content,
+ * ids, counts — never the de-redacted artifact.
+ */
+export interface PipelineStepEvent {
+  step: string;
+  detail: string;
+  data?: Record<string, unknown>;
+}
+
 const TASK_SYSTEM = 'https://autonomous-backoffice.dev/task';
 
-export async function runPipeline(resource: Resource): Promise<PipelineResult> {
+export async function runPipeline(
+  resource: Resource,
+  onStep?: (event: PipelineStepEvent) => void,
+): Promise<PipelineResult> {
   const t0 = Date.now();
   const runId = randomUUID();
   const triggerRef = `${resource.resourceType}/${resource.id}`;
-  const step = (name: string, extra = '') =>
+  const step = (name: string, extra = '', data?: Record<string, unknown>) => {
     console.log(`[pipeline ${runId.slice(0, 8)}] ${name} (+${Date.now() - t0}ms)${extra ? ` ${extra}` : ''}`);
+    onStep?.({ step: name, detail: extra.replace(/^—\s*/, ''), data });
+  };
 
   const store = await getStore();
 
@@ -52,11 +69,11 @@ export async function runPipeline(resource: Resource): Promise<PipelineResult> {
   }
   if (parsed.kind === 'feedback') {
     const result = await applyOutcomeFeedback(store, resource as ClaimResponse);
-    step('feedback', `— ${result.detail}`);
+    step('feedback', `— ${result.detail}`, { matched: result.matched, detail: result.detail });
     return { status: 'feedback', detail: result.detail };
   }
   const intent = parsed.intent;
-  step(`parse-intent → ${intent.name}`, `for ${triggerRef}`);
+  step(`parse-intent → ${intent.name}`, `for ${triggerRef}`, { intent: intent.name, trigger: triggerRef });
 
   // Idempotency: never double-process an event (Task-by-focus).
   const existingTasks = await store.search<Task>('Task', { focus: triggerRef });
@@ -79,16 +96,28 @@ export async function runPipeline(resource: Resource): Promise<PipelineResult> {
     const criteriaQuery = session.redact(ctx.queryRaw);
     const playbookQuery = session.redact(`${ctx.denialCode ?? ''} ${ctx.queryRaw}`.trim());
     const pubmedTerm = ctx.pubmedTermRaw ? session.redact(ctx.pubmedTermRaw) : undefined;
-    step('redact', `— ${session.replacements} PHI value(s) tokenized`);
+    step('redact', `— ${session.replacements} PHI value(s) tokenized`, {
+      redactionCount: session.replacements,
+      contextRedacted: (contextText as string).slice(0, 2000),
+    });
 
     // 3 ── retrieve (Moss for all; PubMed for denial-appeal only)
     await hydrateLearnedPlaybooks(store);
     const sources = await retrieve(intent, { criteriaQuery, playbookQuery, pubmedTerm });
-    step('retrieve', `— ${sources.length} source(s)`);
+    step('retrieve', `— ${sources.length} source(s)`, {
+      sources: sources.map((s) => ({ id: s.id, kind: s.kind, title: s.title, snippet: s.text.slice(0, 220) })),
+    });
 
     // 4 ── reason + act plan (redacted context only; citations validated)
     const reasoned = await reason(intent, contextText, sources, ctx.meta);
-    step('reason', `— ${reasoned.engine}: ${reasoned.decision}`);
+    step('reason', `— ${reasoned.engine}: ${reasoned.decision}`, {
+      engine: reasoned.engine,
+      decision: reasoned.decision,
+      rationale: reasoned.rationale,
+      keyArguments: reasoned.keyArguments,
+      citations: reasoned.citations,
+      letterRedacted: reasoned.letter,
+    });
 
     // 5 ── de-redact final artifact server-side (fail closed)
     let finalArtifact = '';
@@ -139,11 +168,17 @@ export async function runPipeline(resource: Resource): Promise<PipelineResult> {
       }
       throw err;
     }
-    step('de-redact', '— PHI re-injected server-side');
+    // De-redacted `finalArtifact` carries real PHI from here on — it is used
+    // only for the act() dispatch below and never appears in a step event.
+    step('de-redact', '— PHI re-injected server-side (for dispatch only — never surfaced)', {
+      artifactLength: finalArtifact.length,
+    });
 
     // 6 ── act (Stedi is the only permitted PHI receiver) + write outcome
     const actions = await act(store, intent, ctx, reasoned, finalArtifact);
-    step('act', `— ${actions.map((a) => a.action).join(', ') || 'no dispatch'}`);
+    step('act', `— ${actions.map((a) => a.action).join(', ') || 'no dispatch'}`, {
+      actions: actions.map((a) => ({ action: a.action, detail: a.detail, simulated: a.simulated ?? false })),
+    });
 
     const communication = await store.create<Communication>({
       resourceType: 'Communication',
@@ -211,7 +246,10 @@ export async function runPipeline(resource: Resource): Promise<PipelineResult> {
     if (intent.name === 'denial-appeal' && ctx.denialCode) {
       await registerAttempt(store, ctx.denialCode, ctx.denialLabel ?? ctx.denialCode);
     }
-    step('learn', `— episodic written, outcome=${record.outcome}`);
+    step('learn', `— episodic written, outcome=${record.outcome}`, {
+      outcome: record.outcome,
+      gapsClosed: record.gapsClosed ?? 0,
+    });
 
     releaseRun(runId);
     return { status: 'completed', runId, intent: intent.name, taskId: task.id, detail: reasoned.decision };

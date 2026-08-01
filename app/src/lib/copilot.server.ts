@@ -4,7 +4,7 @@ import { getStore, type FhirStore } from './medplum.server';
 import { listEpisodic } from './memory/episodic';
 import { avgTurnaroundMs, loadPlaybook } from './memory/playbook';
 import { mossMode } from './moss.server';
-import { runPipeline, type PipelineResult } from './pipeline';
+import { runPipeline, type PipelineResult, type PipelineStepEvent } from './pipeline';
 import { reasonEngine } from './reason';
 
 /**
@@ -51,6 +51,7 @@ async function payerFor(store: FhirStore, patientRef?: string): Promise<string> 
 export async function fireEvent(
   event: CopilotEvent,
   opts: { claimIdentifier?: string; denialCode?: string } = {},
+  onStep?: (event: PipelineStepEvent) => void,
 ): Promise<FireResult> {
   const store = await getStore();
   const claimId = opts.claimIdentifier || 'DEMO-CLAIM-1';
@@ -86,7 +87,7 @@ export async function fireEvent(
         ],
         processNote: [{ number: 1, text: `Denied: ${text}` }],
       });
-      const pipeline = await runPipeline(cr);
+      const pipeline = await runPipeline(cr, onStep);
       return { summary: `Denial ${code} recorded on ${claimId} → pipeline ${pipeline.status}: ${pipeline.detail ?? ''}`, pipeline };
     }
     case 'approve': {
@@ -118,13 +119,13 @@ export async function fireEvent(
         ],
         processNote: [{ number: 1, text: 'Appeal reviewed; denial overturned; payment issued.' }],
       });
-      const pipeline = await runPipeline(cr);
+      const pipeline = await runPipeline(cr, onStep);
       return { summary: `Approval recorded on ${claimId} ($${amount}) → ${pipeline.status}: ${pipeline.detail ?? ''}`, pipeline };
     }
     case 'triage': {
       const claim = await findByIdentifier<Claim>(store, 'Claim', claimId);
       const updated = await store.update<Claim>({ ...claim, status: 'active' });
-      const pipeline = await runPipeline(updated);
+      const pipeline = await runPipeline(updated, onStep);
       return { summary: `Claim ${claimId} set active → triage ${pipeline.status}: ${pipeline.detail ?? ''}`, pipeline };
     }
     case 'discharge': {
@@ -134,7 +135,7 @@ export async function fireEvent(
         status: 'finished',
         period: { ...enc.period, end: new Date().toISOString() },
       });
-      const pipeline = await runPipeline(updated);
+      const pipeline = await runPipeline(updated, onStep);
       return { summary: `Encounter DEMO-ENC-1 finished → discharge outreach ${pipeline.status}: ${pipeline.detail ?? ''}`, pipeline };
     }
     case 'prior-auth': {
@@ -155,7 +156,7 @@ export async function fireEvent(
           authoredOn: new Date().toISOString(),
           note: [{ text: 'Progressive radicular symptoms with new motor weakness after 7 weeks of failed conservative therapy (PT + NSAIDs).' }],
         }));
-      const pipeline = await runPipeline(sr);
+      const pipeline = await runPipeline(sr, onStep);
       return { summary: `MRI lumbar prior-auth request → ${pipeline.status}: ${pipeline.detail ?? ''}`, pipeline };
     }
   }

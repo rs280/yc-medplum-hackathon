@@ -1,17 +1,20 @@
 import type { Metadata } from 'next';
+import { Figtree } from 'next/font/google';
 import type { ReactNode } from 'react';
 import './globals.css';
 
+const figtree = Figtree({ subsets: ['latin'], display: 'swap', variable: '--font-figtree' });
+
 export const metadata: Metadata = {
-  title: 'Autonomous Back Office — Copilot',
+  title: 'Back Office — Clinic Copilot',
   description:
-    'Voice + chat copilot for clinicians and front-desk staff, driving four FHIR-triggered agents: triage, appeal, discharge, prior auth.',
+    'Cursor for medical clinics: a voice + chat copilot driving autonomous agents across intake, scheduling, discharge follow-up, and insurance.',
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body className={figtree.variable}>{children}</body>
     </html>
   );
 }

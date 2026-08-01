@@ -2,26 +2,33 @@
    Text always wears ink tokens, never series color; status colors ship with
    icon + label, never color alone. */
 :root {
-  --page: #f7f7f4;
-  --surface: #fffffe;
-  --ink: #0b0b0b;
-  --ink-2: #52514e;
-  --muted: #898781;
-  --grid: #e1e0d9;
-  --baseline: #c3c2b7;
-  --border: rgba(11, 11, 11, 0.09);
-  --track: #f0efec;
-  --series: #2a78d6; /* single-hue magnitude encoding (win-rate bars) */
-  --accent: #2a78d6;
-  --accent-soft: rgba(42, 120, 214, 0.09);
-  --good: #0ca30c;
-  --good-text: #006300;
-  --warning: #fab219;
-  --serious: #ec835a;
-  --critical: #d03b3b;
-  --shadow-sm: 0 1px 2px rgba(11, 11, 11, 0.04), 0 1px 6px rgba(11, 11, 11, 0.03);
-  --shadow-md: 0 4px 16px rgba(11, 11, 11, 0.08);
-  --font: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  /* Clinical palette: calm teal primary + health green, high contrast (per
+     ui-ux-pro-max "Accessible & Ethical" healthcare recommendation). */
+  --page: #f4f7f8;
+  --surface: #ffffff;
+  --ink: #0c1b1e;
+  --ink-2: #47585c;
+  --muted: #7b8a8e;
+  --grid: #e0e7e9;
+  --baseline: #c0ccd0;
+  --border: rgba(12, 27, 30, 0.09);
+  --track: #eef2f3;
+  --series: #0891b2; /* single-hue magnitude encoding (win-rate bars) */
+  --accent: #0891b2;
+  --accent-strong: #0e7490;
+  --accent-soft: rgba(8, 145, 178, 0.09);
+  --good: #059669;
+  --good-text: #047857;
+  --warning: #d97706;
+  --serious: #ea580c;
+  --critical: #dc2626;
+  --phi: #b45309; /* PHI placeholder tokens, e.g. [NAME_1] — redaction is the proof point */
+  --phi-bg: rgba(180, 83, 9, 0.12);
+  --cite: #6d28d9; /* evidence citation markers, e.g. [PMID:...] */
+  --cite-bg: rgba(109, 40, 217, 0.1);
+  --shadow-sm: 0 1px 2px rgba(12, 27, 30, 0.05), 0 1px 6px rgba(12, 27, 30, 0.04);
+  --shadow-md: 0 4px 18px rgba(12, 27, 30, 0.1);
+  --font: var(--font-figtree, ui-sans-serif), system-ui, -apple-system, 'Segoe UI', sans-serif;
   --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
@@ -41,27 +48,27 @@ body {
   line-height: 1.45;
 }
 
-/* ── App shell: topbar + content + copilot ──────────────────────────────── */
+/* ── App shell: sidebar + (topbar + content + copilot) ──────────────────── */
 .shell {
   display: flex;
-  flex-direction: column;
   height: 100vh;
+}
+.shell-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
 }
 .topbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 10px 20px;
+  padding: 9px 20px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
   z-index: 10;
-}
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 10px;
 }
 .brand-mark {
   display: inline-flex;
@@ -69,25 +76,19 @@ body {
   justify-content: center;
   width: 30px;
   height: 30px;
-  border-radius: 8px;
-  background: var(--ink);
+  border-radius: 9px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-strong));
   color: #fff;
-  font-size: 15px;
+  flex-shrink: 0;
 }
 .brand-name {
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 700;
   letter-spacing: -0.01em;
 }
 .brand-sub {
   font-size: 11px;
   color: var(--muted);
-}
-.topbar-right {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  flex-wrap: wrap;
 }
 .shell-body {
   display: flex;
@@ -99,6 +100,93 @@ body {
   min-width: 0;
   overflow-y: auto;
   padding: 20px 22px 64px;
+}
+
+/* ── Sidebar ────────────────────────────────────────────────────────────── */
+.sidebar {
+  width: 212px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  padding: 14px 10px;
+  gap: 18px;
+}
+.sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 2px 8px;
+  text-decoration: none;
+  color: var(--ink);
+  cursor: pointer;
+}
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.sidebar-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  text-decoration: none;
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: background 150ms ease, color 150ms ease;
+  min-height: 44px;
+}
+.sidebar-item:hover {
+  background: var(--track);
+  color: var(--ink);
+}
+.sidebar-item.active {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+.sidebar-item.active .sidebar-item-label {
+  color: var(--accent-strong);
+}
+.sidebar-item-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+.sidebar-item-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.sidebar-item-sub {
+  font-size: 10.5px;
+  color: var(--muted);
+}
+.sidebar-foot {
+  margin-top: auto;
+  font-size: 10.5px;
+  color: var(--muted);
+  line-height: 1.5;
+  padding: 8px 10px;
+  border-top: 1px solid var(--grid);
+}
+
+/* ── Page header ────────────────────────────────────────────────────────── */
+.page-head {
+  margin: 2px 0 16px;
+}
+.page-head h1 {
+  font-size: 21px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin: 0 0 3px;
+}
+.page-head p {
+  font-size: 13px;
+  color: var(--ink-2);
+  margin: 0;
 }
 
 /* ── Chips + live indicator ─────────────────────────────────────────────── */
@@ -206,8 +294,15 @@ body {
   align-items: flex-start;
 }
 .agent-icon {
-  font-size: 18px;
-  line-height: 1.3;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  flex-shrink: 0;
 }
 .agent-name {
   font-size: 13px;
@@ -371,6 +466,22 @@ tbody tr:hover {
   color: #b4451f;
   background: rgba(236, 131, 90, 0.14);
 }
+.badge.tone-good {
+  color: var(--good-text);
+  background: rgba(5, 150, 105, 0.1);
+}
+.badge.tone-bad {
+  color: var(--critical);
+  background: rgba(220, 38, 38, 0.1);
+}
+.badge.tone-neutral {
+  color: var(--ink-2);
+  background: var(--track);
+}
+.badge.tone-accent {
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+}
 
 /* ── Artifact preview (redacted letter — the tokens ARE the demo) ───────── */
 .artifact {
@@ -415,9 +526,15 @@ tbody tr:hover {
   flex-shrink: 0;
 }
 .copilot-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-size: 14px;
   font-weight: 700;
   letter-spacing: -0.01em;
+}
+.copilot-title svg {
+  color: var(--accent);
 }
 .copilot-sub {
   font-size: 11px;
@@ -452,13 +569,17 @@ tbody tr:hover {
   right: 18px;
   bottom: 18px;
   z-index: 50;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   border: none;
-  background: var(--ink);
+  background: linear-gradient(135deg, var(--accent), var(--accent-strong));
   color: #fff;
   font-size: 13px;
   font-weight: 600;
+  font-family: var(--font);
   border-radius: 999px;
-  padding: 11px 18px;
+  padding: 12px 18px;
   cursor: pointer;
   box-shadow: var(--shadow-md);
 }
@@ -703,11 +824,545 @@ tbody tr:hover {
   border-color: var(--border);
 }
 
+/* ── PHI / citation token highlighting — the visible proof of redaction ─── */
+.phi-tok {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 0.92em;
+  font-weight: 600;
+  color: var(--phi);
+  background: var(--phi-bg);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+.cite-tok {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 0.92em;
+  font-weight: 600;
+  color: var(--cite);
+  background: var(--cite-bg);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+
+/* ── Live badge (pulsing dot + label) ────────────────────────────────────── */
+.live-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--ink-2);
+  background: var(--track);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 10px;
+  white-space: nowrap;
+}
+.live-badge .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--good);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+/* ── Dashboard: Live pipeline trace (the headline "seeing is believing"
+   element) — a six-stage stepper built from the same fields the copilot
+   streams live, so the story is identical whether you watch it happen or
+   land on the page after. ───────────────────────────────────────────────── */
+.runtrace-card {
+  border: 1px solid rgba(42, 120, 214, 0.25);
+  box-shadow: var(--shadow-md);
+}
+.runtrace-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.runtrace-head h2 {
+  text-transform: none;
+  font-size: 15px;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+.runtrace-steps {
+  display: flex;
+  flex-direction: column;
+  border-left: 2px solid var(--grid);
+  margin-left: 9px;
+}
+.runtrace-step {
+  position: relative;
+  padding: 0 0 16px 22px;
+}
+.runtrace-step:last-child {
+  padding-bottom: 4px;
+}
+.runtrace-step::before {
+  content: '';
+  position: absolute;
+  left: -6px;
+  top: 3px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--surface);
+}
+.runtrace-step-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 5px;
+}
+.runtrace-body {
+  font-size: 12.5px;
+  color: var(--ink-2);
+  line-height: 1.55;
+}
+.runtrace-body code {
+  font-family: var(--mono);
+  font-size: 0.92em;
+  background: var(--track);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+.runtrace-decision {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ink);
+  background: var(--accent-soft);
+  border: 1px solid rgba(42, 120, 214, 0.3);
+  border-radius: 6px;
+  padding: 2px 8px;
+  margin-bottom: 6px;
+}
+.runtrace-artifact-label {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--ink-2);
+  margin: 16px 0 6px;
+  padding-top: 14px;
+  border-top: 1px solid var(--grid);
+}
+
+/* Shared trace primitives (icon / label / chips / lists) used by both the
+   dashboard RunTrace stepper and the copilot's live pipeline trace. */
+.trace-svg {
+  color: var(--accent-strong);
+  flex-shrink: 0;
+  align-self: center;
+}
+.trace-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink);
+}
+.trace-detail {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.trace-chips {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+.trace-chip {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink-2);
+  background: var(--track);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 2px 6px;
+  white-space: nowrap;
+}
+.trace-chip.chip-pubmed {
+  color: var(--cite);
+  background: var(--cite-bg);
+  border-color: rgba(106, 63, 199, 0.25);
+}
+.trace-text {
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--ink-2);
+  margin-top: 3px;
+}
+.trace-list {
+  margin: 6px 0 0;
+  padding-left: 16px;
+  font-size: 12px;
+  color: var(--ink-2);
+  line-height: 1.5;
+}
+.trace-list li {
+  margin: 3px 0;
+}
+.trace-artifact {
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  background: var(--track);
+  border: 1px solid var(--grid);
+  border-radius: 7px;
+  padding: 9px 10px;
+  margin-top: 6px;
+  max-height: 220px;
+  overflow-y: auto;
+  color: var(--ink);
+}
+
+/* ── Copilot: live pipeline trace nested under a running/done tool step ─── */
+.step-block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.trace {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-left: 8px;
+  padding-left: 10px;
+  border-left: 2px solid var(--grid);
+}
+.trace-entry {
+  font-size: 12px;
+  animation: trace-in 0.2s ease-out;
+}
+.trace-entry .trace-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+@keyframes trace-in {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ── Patients: intake card + journey timeline ───────────────────────────── */
+.patient-card {
+  display: flex;
+  gap: 28px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.patient-id {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 240px;
+}
+.avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+  color: #fff;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  flex-shrink: 0;
+}
+.patient-name {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.patient-meta {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 11.5px;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.patient-coverage .label {
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.patient-payer {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.journey {
+  display: flex;
+  flex-direction: column;
+  border-left: 2px solid var(--grid);
+  margin-left: 13px;
+}
+.journey-item {
+  position: relative;
+  display: flex;
+  gap: 12px;
+  padding: 0 0 16px 18px;
+}
+.journey-item:last-child {
+  padding-bottom: 4px;
+}
+.journey-icon {
+  position: absolute;
+  left: -14px;
+  top: -1px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--track);
+  border: 2px solid var(--surface);
+  color: var(--ink-2);
+  flex-shrink: 0;
+}
+.journey-item.kind-agent .journey-icon,
+.journey-item.kind-appointment .journey-icon {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+.journey-item.kind-denial .journey-icon {
+  background: rgba(220, 38, 38, 0.1);
+  color: var(--critical);
+}
+.journey-item.kind-approval .journey-icon {
+  background: rgba(5, 150, 105, 0.12);
+  color: var(--good-text);
+}
+.journey-body {
+  min-width: 0;
+  padding-left: 16px;
+}
+.journey-title-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.journey-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.journey-when {
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  margin-left: auto;
+  white-space: nowrap;
+}
+.journey-detail {
+  font-size: 12px;
+  color: var(--ink-2);
+  margin-top: 2px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+/* ── Claims board (revenue-cycle kanban) ────────────────────────────────── */
+.board {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(150px, 1fr));
+  gap: 10px;
+  align-items: start;
+}
+.board-col {
+  background: var(--track);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px;
+  min-height: 180px;
+}
+.board-col-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+.board-col-label {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ink);
+}
+.board-col-count {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--ink-2);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  min-width: 20px;
+  text-align: center;
+  padding: 1px 6px;
+  font-variant-numeric: tabular-nums;
+}
+.board-col-hint {
+  font-size: 10.5px;
+  color: var(--muted);
+  margin: 1px 0 10px;
+}
+.board-col.stage-denied {
+  border-color: rgba(220, 38, 38, 0.25);
+}
+.board-col.stage-paid {
+  border-color: rgba(5, 150, 105, 0.3);
+}
+.board-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.board-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 11px;
+  box-shadow: var(--shadow-sm);
+}
+.board-card-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.board-card-id {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.board-card-amt {
+  font-size: 12.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.board-card-proc {
+  font-size: 12px;
+  color: var(--ink);
+  margin-top: 3px;
+}
+.board-card-meta {
+  font-size: 11px;
+  color: var(--ink-2);
+  margin-top: 2px;
+}
+.board-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-top: 7px;
+}
+.board-card-when {
+  font-size: 10.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  margin-left: auto;
+}
+.board-empty {
+  text-align: center;
+  color: var(--baseline);
+  font-size: 13px;
+  padding: 14px 0;
+}
+
+/* ── Schedule ───────────────────────────────────────────────────────────── */
+.sched {
+  display: flex;
+  flex-direction: column;
+}
+.sched-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 2px;
+}
+.sched-row + .sched-row {
+  border-top: 1px solid var(--grid);
+}
+.sched-time {
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent-strong);
+  min-width: 76px;
+}
+.sched-body {
+  min-width: 0;
+  flex: 1;
+}
+.sched-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+.sched-meta {
+  font-size: 11.5px;
+  color: var(--ink-2);
+}
+.empty-illustration {
+  display: flex;
+  justify-content: center;
+  color: var(--baseline);
+  padding: 10px 0 2px;
+}
+
 /* ── Responsive ─────────────────────────────────────────────────────────── */
+@media (max-width: 1180px) {
+  .board {
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  }
+}
 @media (max-width: 980px) {
   .shell {
     height: auto;
     min-height: 100vh;
+    flex-direction: column;
+  }
+  .sidebar {
+    width: 100%;
+    flex-direction: row;
+    align-items: center;
+    padding: 8px 12px;
+    gap: 10px;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    overflow-x: auto;
+  }
+  .sidebar-nav {
+    flex-direction: row;
+    gap: 4px;
+  }
+  .sidebar-item {
+    padding: 7px 10px;
+  }
+  .sidebar-item-sub,
+  .sidebar-foot,
+  .sidebar-brand .brand-sub {
+    display: none;
   }
   .shell-body {
     flex-direction: column;
@@ -721,7 +1376,13 @@ tbody tr:hover {
     border-top: 1px solid var(--border);
     height: 70vh;
   }
-  .brand-sub {
-    display: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }
