@@ -42,8 +42,12 @@ function fallbackDb(): FallbackDb {
   return g.__mossFallback;
 }
 
+function mossKey(): string | undefined {
+  return process.env.MOSS_PROJECT_KEY || process.env.MOSS_API_KEY || undefined;
+}
+
 function mossConfigured(): boolean {
-  return Boolean(process.env.MOSS_PROJECT_ID && process.env.MOSS_API_KEY);
+  return Boolean(process.env.MOSS_PROJECT_ID && mossKey());
 }
 
 export function mossMode(): 'moss' | 'fallback' {
@@ -55,7 +59,7 @@ async function getMossClient(): Promise<any | null> {
   g.__mossClient ??= (async () => {
     try {
       const { MossClient } = await import('@moss-dev/moss');
-      return new MossClient(process.env.MOSS_PROJECT_ID!, process.env.MOSS_API_KEY!);
+      return new MossClient(process.env.MOSS_PROJECT_ID!, mossKey()!);
     } catch (err) {
       console.warn('[moss] client init failed, using lexical fallback:', err);
       return null;
@@ -70,6 +74,24 @@ async function ensureLoaded(client: any, index: string): Promise<void> {
   await client.loadIndex(index);
   g.__mossLoaded.add(index);
 }
+
+/**
+ * Load both indexes once at boot (background) so the first pipeline run pays
+ * ~15ms local queries instead of the one-time index+model download.
+ */
+async function warmIndexes(): Promise<void> {
+  const client = await getMossClient();
+  if (!client) return;
+  for (const index of [CRITERIA_INDEX, PLAYBOOK_INDEX]) {
+    try {
+      await ensureLoaded(client, index);
+      console.log(`[moss] index '${index}' loaded (local queries active)`);
+    } catch (err) {
+      console.warn(`[moss] warm-up load failed for '${index}':`, err);
+    }
+  }
+}
+if (mossConfigured()) void warmIndexes();
 
 // ── Lexical fallback scoring ────────────────────────────────────────────────
 
