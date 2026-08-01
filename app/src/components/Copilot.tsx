@@ -64,14 +64,14 @@ const SUGGESTIONS = [
 const STEP_ICONS: Record<Step['status'], string> = { running: '◌', done: '✓', error: '!' };
 
 const TRACE_META: Array<{ match: (s: string) => boolean; Icon: typeof Lock; label: string }> = [
-  { match: (s) => s.startsWith('parse-intent'), Icon: Crosshair, label: 'trigger' },
-  { match: (s) => s === 'redact', Icon: Lock, label: 'redact PHI' },
-  { match: (s) => s === 'retrieve', Icon: Search, label: 'retrieve evidence' },
-  { match: (s) => s === 'reason', Icon: BrainCircuit, label: 'reason' },
-  { match: (s) => s === 'de-redact', Icon: Unlock, label: 'de-redact' },
-  { match: (s) => s === 'act', Icon: Zap, label: 'act' },
-  { match: (s) => s === 'learn', Icon: BookOpenCheck, label: 'learn' },
-  { match: (s) => s === 'feedback', Icon: RefreshCcw, label: 'feedback' },
+  { match: (s) => s.startsWith('parse-intent'), Icon: Crosshair, label: 'what happened' },
+  { match: (s) => s === 'redact', Icon: Lock, label: 'hiding patient identity' },
+  { match: (s) => s === 'retrieve', Icon: Search, label: 'reading the rules & research' },
+  { match: (s) => s === 'reason', Icon: BrainCircuit, label: 'writing the response' },
+  { match: (s) => s === 'de-redact', Icon: Unlock, label: 'restoring details' },
+  { match: (s) => s === 'act', Icon: Zap, label: 'sending it' },
+  { match: (s) => s === 'learn', Icon: BookOpenCheck, label: 'remembering what worked' },
+  { match: (s) => s === 'feedback', Icon: RefreshCcw, label: 'updating the scoreboard' },
 ];
 
 function traceMeta(step: string): { Icon: typeof Lock; label: string } {

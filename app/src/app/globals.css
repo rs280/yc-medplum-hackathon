@@ -1330,6 +1330,187 @@ tbody tr:hover {
   padding: 10px 0 2px;
 }
 
+/* ── Hero stat tile ─────────────────────────────────────────────────────── */
+.tile-hero {
+  border-color: rgba(5, 150, 105, 0.35);
+  background: linear-gradient(160deg, rgba(5, 150, 105, 0.06), var(--surface) 55%);
+}
+.tile-hero .value.accent {
+  color: var(--good-text);
+}
+
+/* ── Patient view: phone mockup + explainer ─────────────────────────────── */
+.patient-view {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+.phone {
+  position: relative;
+  width: 330px;
+  flex-shrink: 0;
+  background: #0d1517;
+  border-radius: 38px;
+  padding: 10px;
+  box-shadow: var(--shadow-md), 0 18px 40px rgba(12, 27, 30, 0.18);
+  display: flex;
+  flex-direction: column;
+  height: 640px;
+}
+.phone-notch {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 90px;
+  height: 22px;
+  background: #0d1517;
+  border-radius: 999px;
+  z-index: 2;
+}
+.phone-status {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: var(--surface);
+  border-radius: 28px 28px 0 0;
+  padding: 12px 22px 4px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.phone-status-icons {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+}
+.phone-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--surface);
+  padding: 10px 16px 12px;
+  border-bottom: 1px solid var(--grid);
+}
+.avatar-sm {
+  width: 34px;
+  height: 34px;
+  font-size: 12px;
+}
+.phone-clinic {
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+.phone-patient {
+  font-size: 14.5px;
+  font-weight: 700;
+}
+.phone-feed {
+  flex: 1;
+  overflow-y: auto;
+  background: var(--page);
+  padding: 12px;
+}
+.phone-feed-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.phone-empty {
+  font-size: 12.5px;
+  color: var(--muted);
+  text-align: center;
+  padding: 40px 16px;
+  line-height: 1.6;
+}
+.phone-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 12px;
+  padding: 10px 12px;
+  box-shadow: var(--shadow-sm);
+}
+.phone-card.tone-good {
+  border-left-color: var(--good);
+}
+.phone-card.tone-warn {
+  border-left-color: var(--warning);
+}
+.phone-card-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.phone-card-icon {
+  display: inline-flex;
+  color: var(--accent-strong);
+}
+.phone-card.tone-good .phone-card-icon {
+  color: var(--good-text);
+}
+.phone-card.tone-warn .phone-card-icon {
+  color: var(--warning);
+}
+.phone-card-title {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.phone-card-body {
+  font-size: 12px;
+  color: var(--ink-2);
+  line-height: 1.55;
+  margin-top: 4px;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+.phone-card-when {
+  font-size: 10px;
+  color: var(--muted);
+  margin-top: 6px;
+  font-variant-numeric: tabular-nums;
+}
+.phone-bar {
+  height: 22px;
+  background: var(--surface);
+  border-radius: 0 0 28px 28px;
+  position: relative;
+}
+.phone-bar::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: 7px;
+  transform: translateX(-50%);
+  width: 110px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--baseline);
+}
+.patient-view-side {
+  flex: 1;
+  min-width: 260px;
+}
+.plain-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+  color: var(--ink-2);
+  line-height: 1.65;
+}
+.plain-list li {
+  margin: 8px 0;
+}
+.plain-list b {
+  color: var(--ink);
+}
+
 /* ── Responsive ─────────────────────────────────────────────────────────── */
 @media (max-width: 1180px) {
   .board {

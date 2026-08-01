@@ -274,6 +274,101 @@ export async function claimsBoard(): Promise<ClaimCard[]> {
   });
 }
 
+// ── Patient portal (what the patient sees) ──────────────────────────────────
+
+export interface PortalItem {
+  at: string;
+  kind: 'message' | 'visit' | 'insurance_win' | 'insurance_fight' | 'screening';
+  title: string;
+  body?: string;
+}
+
+/**
+ * The consumer-facing side of the same events: while the agents work the
+ * back office, the patient's phone quietly fills with good news. Everything
+ * here is derived from the same FHIR resources as the clinician pages.
+ */
+export async function patientPortal(): Promise<{ patient?: PatientSummary; items: PortalItem[] }> {
+  const patients = await listPatients();
+  const patient = patients[0];
+  if (!patient) return { patient: undefined, items: [] };
+  const store = await getStore();
+  const ref = `Patient/${patient.id}`;
+  const firstName = patient.name.split(' ')[0];
+
+  const [comms, appts, srs, cards] = await Promise.all([
+    store.search<Communication>('Communication', { subject: ref }),
+    store.search<Appointment>('Appointment', {}),
+    store.search<ServiceRequest>('ServiceRequest', { subject: ref }),
+    claimsBoard(),
+  ]);
+
+  const items: PortalItem[] = [];
+
+  for (const m of comms) {
+    if (m.category?.[0]?.text !== 'outreach message') continue;
+    items.push({
+      at: m.sent ?? m.meta?.lastUpdated ?? '',
+      kind: 'message',
+      title: 'Message from your care team',
+      body: m.payload?.[0]?.contentString?.slice(0, 420),
+    });
+  }
+
+  for (const a of appts) {
+    if (!a.participant?.some((p) => p.actor?.reference === ref)) continue;
+    items.push({
+      at: a.meta?.lastUpdated ?? a.start ?? '',
+      kind: 'visit',
+      title: a.description ?? 'Visit booked for you',
+      body: a.start
+        ? `${new Date(a.start).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })} at ${new Date(a.start).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })} — no action needed, just show up.`
+        : undefined,
+    });
+  }
+
+  for (const sr of srs) {
+    if (sr.status !== 'completed') continue;
+    const label = sr.code?.text ?? sr.code?.coding?.[0]?.display ?? 'screening';
+    items.push({
+      at: sr.meta?.lastUpdated ?? '',
+      kind: 'screening',
+      title: `Your ${label.toLowerCase()} is taken care of`,
+      body: 'It was overdue, so we booked it for you during your check-in call.',
+    });
+  }
+
+  for (const c of cards) {
+    if (c.patientName !== patient.name) continue;
+    if (c.stage === 'paid') {
+      items.push({
+        at: c.updatedAt,
+        kind: 'insurance_win',
+        title: 'Good news about your insurance',
+        body: `${c.payer} approved your ${c.procedure ?? 'claim'}${c.amount != null ? ` ($${c.amount.toLocaleString()})` : ''}. Your balance for this visit is $0.`,
+      });
+    } else if (c.stage === 'denied' || c.stage === 'appealed') {
+      items.push({
+        at: c.updatedAt,
+        kind: 'insurance_fight',
+        title: "We're handling an insurance issue for you",
+        body: `${c.payer} initially declined your ${c.procedure ?? 'claim'}${c.denialLabel ? ` (${c.denialLabel.toLowerCase()})` : ''}. ${firstName}, you don't need to do anything — we've already filed an appeal with supporting medical evidence.`,
+      });
+    }
+  }
+
+  return { patient, items: items.filter((i) => i.at).sort((a, b) => b.at.localeCompare(a.at)) };
+}
+
+/** Dollars recovered via approvals after appeal — the layman headline number. */
+export async function moneyRecovered(): Promise<number> {
+  const store = await getStore();
+  const responses = await store.search<ClaimResponse>('ClaimResponse', {});
+  return responses
+    .filter((r) => r.outcome === 'complete')
+    .reduce((s, r) => s + (r.payment?.amount?.value ?? 0), 0);
+}
+
 // ── Schedule ────────────────────────────────────────────────────────────────
 
 export interface AppointmentRow {

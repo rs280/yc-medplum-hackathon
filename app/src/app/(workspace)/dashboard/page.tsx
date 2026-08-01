@@ -14,6 +14,7 @@ import {
 import { getStore } from '@/lib/medplum.server';
 import { listEpisodic, type StoredEpisodic } from '@/lib/memory/episodic';
 import { avgTurnaroundMs, loadPlaybook } from '@/lib/memory/playbook';
+import { listAppointments, moneyRecovered } from '@/lib/workspace.server';
 import { renderRedacted } from '@/components/Redacted';
 import { CountUp, Stagger } from '@/components/anim';
 
@@ -55,10 +56,10 @@ function Badge({ outcome }: { outcome: StoredEpisodic['outcome'] }) {
 }
 
 const AGENTS = [
-  { intent: 'claim-triage', name: 'Claim Triage', desc: 'fixes gaps before submission', Icon: ShieldCheck },
-  { intent: 'denial-appeal', name: 'Denial Appeal', desc: 'drafts evidence-backed appeals', Icon: Scale },
-  { intent: 'prior-auth-docs', name: 'Prior Auth', desc: 'compiles authorization packets', Icon: FileText },
-  { intent: 'discharge-caregap', name: 'Discharge Outreach', desc: 'calls patients, closes care gaps', Icon: PhoneCall },
+  { intent: 'claim-triage', name: 'The Checker', desc: 'reviews claims before they go out, so they don’t bounce', Icon: ShieldCheck },
+  { intent: 'denial-appeal', name: 'The Fighter', desc: 'when insurance says no, it appeals — with evidence', Icon: Scale },
+  { intent: 'prior-auth-docs', name: 'The Paperwork', desc: 'files insurance pre-approvals nobody has time for', Icon: FileText },
+  { intent: 'discharge-caregap', name: 'The Caller', desc: 'checks in after visits, books follow-ups & screenings', Icon: PhoneCall },
 ] as const;
 
 const AGENT_NAME: Record<StoredEpisodic['intent'], string> = {
@@ -79,7 +80,7 @@ function RunTrace({ run }: { run: StoredEpisodic }) {
   return (
     <div className="card runtrace-card">
       <div className="runtrace-head">
-        <h2 style={{ margin: 0 }}>Live pipeline trace</h2>
+        <h2 style={{ margin: 0 }}>Watch it work — the last job, step by step</h2>
         <span className="live-badge">
           <span className="dot" /> {AGENT_NAME[run.intent]} · {fmtTime(run.createdAt)}
         </span>
@@ -89,14 +90,14 @@ function RunTrace({ run }: { run: StoredEpisodic }) {
         <div className="runtrace-step">
           <div className="runtrace-step-head">
             <Crosshair className="trace-svg" size={14} aria-hidden />
-            <span className="trace-label">trigger</span>
+            <span className="trace-label">what happened</span>
           </div>
           <div className="runtrace-body">
-            {AGENT_NAME[run.intent]} triggered by <code>{run.triggerRef}</code>
+            {AGENT_NAME[run.intent]} woke up because of <code>{run.triggerRef}</code>
             {run.denialCode && (
               <>
                 {' '}
-                — denial <b>{run.denialCode}</b> ({run.denialLabel})
+                — insurance said no: <b>{run.denialCode}</b> ({run.denialLabel})
               </>
             )}
           </div>
@@ -105,18 +106,18 @@ function RunTrace({ run }: { run: StoredEpisodic }) {
         <div className="runtrace-step">
           <div className="runtrace-step-head">
             <Lock className="trace-svg" size={14} aria-hidden />
-            <span className="trace-label">redact PHI</span>
+            <span className="trace-label">hides the patient&apos;s identity</span>
           </div>
           <div className="runtrace-body">
-            <b>{run.redactionCount}</b> value{run.redactionCount === 1 ? '' : 's'} replaced with typed tokens before
-            anything left the server — no raw PHI reached the LLM, Moss, or PubMed.
+            <b>{run.redactionCount}</b> personal detail{run.redactionCount === 1 ? '' : 's'} (name, birth date, phone…)
+            swapped for placeholders before anything left the building — the AI never sees who the patient is.
           </div>
         </div>
 
         <div className="runtrace-step">
           <div className="runtrace-step-head">
             <Search className="trace-svg" size={14} aria-hidden />
-            <span className="trace-label">retrieve evidence</span>
+            <span className="trace-label">reads the rulebook &amp; the research</span>
           </div>
           <div className="runtrace-body">
             {sourceChips.length === 0 ? (
@@ -136,7 +137,7 @@ function RunTrace({ run }: { run: StoredEpisodic }) {
         <div className="runtrace-step">
           <div className="runtrace-step-head">
             <BrainCircuit className="trace-svg" size={14} aria-hidden />
-            <span className="trace-label">reason ({run.engine === 'anthropic' ? 'claude' : 'template'})</span>
+            <span className="trace-label">writes the response ({run.engine === 'anthropic' ? 'Claude' : 'template'})</span>
           </div>
           <div className="runtrace-body">
             <div className="runtrace-decision">{run.decision}</div>
@@ -154,7 +155,7 @@ function RunTrace({ run }: { run: StoredEpisodic }) {
         <div className="runtrace-step">
           <div className="runtrace-step-head">
             <Zap className="trace-svg" size={14} aria-hidden />
-            <span className="trace-label">act</span>
+            <span className="trace-label">sends it</span>
           </div>
           <div className="runtrace-body">
             {run.actionsTaken.length === 0 ? (
@@ -174,7 +175,7 @@ function RunTrace({ run }: { run: StoredEpisodic }) {
         <div className="runtrace-step">
           <div className="runtrace-step-head">
             <BookOpenCheck className="trace-svg" size={14} aria-hidden />
-            <span className="trace-label">learn</span>
+            <span className="trace-label">remembers what worked</span>
           </div>
           <div className="runtrace-body">
             <Badge outcome={run.outcome} />
@@ -188,7 +189,7 @@ function RunTrace({ run }: { run: StoredEpisodic }) {
         <>
           <div className="runtrace-artifact-label">
             <Unlock size={13} aria-hidden style={{ verticalAlign: '-2px', marginRight: 5 }} />
-            Artifact — exactly what the LLM produced, PHI tokens visible (never raw values)
+            The actual letter it wrote — highlighted tags are where the patient&apos;s hidden details go back in
           </div>
           <pre className="artifact">{renderRedacted(run.letterRedacted)}</pre>
         </>
@@ -199,23 +200,65 @@ function RunTrace({ run }: { run: StoredEpisodic }) {
 
 export default async function Dashboard() {
   const store = await getStore();
-  const [episodic, playbook] = await Promise.all([listEpisodic(store), loadPlaybook(store)]);
+  const [episodic, playbook, recovered, appointments] = await Promise.all([
+    listEpisodic(store),
+    loadPlaybook(store),
+    moneyRecovered(),
+    listAppointments(),
+  ]);
 
   const appeals = episodic.filter((e) => e.intent === 'denial-appeal');
   const won = appeals.filter((e) => e.outcome === 'won').length;
   const lost = appeals.filter((e) => e.outcome === 'lost').length;
   const resolved = won + lost;
   const winRate = resolved > 0 ? Math.round((100 * won) / resolved) : null;
-  const redactions = episodic.reduce((s, e) => s + e.redactionCount, 0);
   const gapsClosed = episodic.reduce((s, e) => s + (e.gapsClosed ?? 0), 0);
+  // Rough but honest layman conversion: each completed job replaces ~45 min
+  // of staff work (appeal drafting, callbacks, auth paperwork).
+  const hoursSaved = Math.round(episodic.filter((e) => e.outcome !== 'failed').length * 0.75);
   const mostRecent = episodic[0];
 
   return (
     <>
       <div className="page-head">
-        <h1>Overview</h1>
-        <p>Four autonomous agents on one pipeline — everything below is real system state, updating live.</p>
+        <h1>Your AI back office</h1>
+        <p>Four AI teammates handle the paperwork nobody has time for. Everything below is live — nothing is staged.</p>
       </div>
+
+      <Stagger signal={`tiles:${episodic.length}`}>
+        <div className="grid tiles">
+          <div className="card tile tile-hero" title="Payments recovered after the AI appealed a denial">
+            <div className="label">Money recovered</div>
+            <div className="value accent">
+              <CountUp value={recovered} prefix="$" />
+            </div>
+            <div className="note">from insurance denials the AI fought and won</div>
+          </div>
+          <div className="card tile" title="Won / (won + lost) across resolved appeals">
+            <div className="label">Appeals won</div>
+            <div className="value">{winRate == null ? '—' : <CountUp value={winRate} suffix="%" />}</div>
+            <div className="note">
+              {resolved > 0 ? `${won} won · ${lost} lost — most clinics never even file` : 'none resolved yet'}
+            </div>
+          </div>
+          <div className="card tile" title="~45 minutes of staff work per completed job">
+            <div className="label">Staff hours saved</div>
+            <div className="value">
+              <CountUp value={hoursSaved} suffix="h" />
+            </div>
+            <div className="note">appeals, callbacks &amp; forms done automatically</div>
+          </div>
+          <div className="card tile" title="Follow-ups and overdue screenings booked by the caller agent">
+            <div className="label">Patients looked after</div>
+            <div className="value">
+              <CountUp value={appointments.length + gapsClosed} />
+            </div>
+            <div className="note">
+              {appointments.length} visit(s) booked · {gapsClosed} overdue screening(s) caught
+            </div>
+          </div>
+        </div>
+      </Stagger>
 
       <Stagger signal={episodic.length}>
         <div className="grid agent-strip">
@@ -263,41 +306,8 @@ export default async function Dashboard() {
         </div>
       )}
 
-      <div className="grid tiles" style={{ marginTop: 12 }}>
-        <div className="card tile" title="Won / (won + lost) across resolved appeals">
-          <div className="label">Appeal win rate</div>
-          <div className="value accent">{winRate == null ? '—' : <CountUp value={winRate} suffix="%" />}</div>
-          <div className="note">
-            {resolved > 0 ? `${won} won · ${lost} lost of ${resolved} resolved` : `${appeals.length} appeal(s), none resolved yet`}
-          </div>
-        </div>
-        <div className="card tile" title="PHI values replaced with typed tokens before anything left the server">
-          <div className="label">PHI tokens redacted</div>
-          <div className="value">
-            <CountUp value={redactions} />
-          </div>
-          <div className="note">across {episodic.length} pipeline run(s) — zero raw PHI outbound</div>
-        </div>
-        <div className="card tile" title="Overdue screenings booked + completed during discharge outreach">
-          <div className="label">Care gaps closed</div>
-          <div className="value">
-            <CountUp value={gapsClosed} />
-          </div>
-          <div className="note">closed inside discharge outreach</div>
-        </div>
-        <div className="card tile" title="Agent memory stored as FHIR Basic resources in Medplum">
-          <div className="label">Memory records</div>
-          <div className="value">
-            <CountUp value={episodic.length + playbook.length} />
-          </div>
-          <div className="note">
-            {episodic.length} episodic · {playbook.length} playbook (re-indexed into Moss)
-          </div>
-        </div>
-      </div>
-
       <div className="card">
-        <h2>Win rate by denial reason — learned playbook</h2>
+        <h2>It gets smarter every time — win rate by denial reason</h2>
         {playbook.length === 0 ? (
           <p className="empty">
             No appeals yet. Ask the copilot: <em>“appeal the denial on claim 1”</em>
@@ -346,7 +356,7 @@ export default async function Dashboard() {
       </div>
 
       <div className="card">
-        <h2>Memory ledger — pipeline runs</h2>
+        <h2>Everything it did — full activity log</h2>
         {episodic.length === 0 ? (
           <p className="empty">
             No runs yet. Seed with <code>npm run seed</code>, then ask the copilot to appeal a denial.

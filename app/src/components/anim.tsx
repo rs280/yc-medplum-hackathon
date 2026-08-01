@@ -45,14 +45,15 @@ export function Stagger({
 }
 
 /** Animates a numeric value up from 0 whenever it changes. */
-export function CountUp({ value, suffix = '' }: { value: number; suffix?: string }) {
+export function CountUp({ value, prefix = '', suffix = '' }: { value: number; prefix?: string; suffix?: string }) {
   const ref = useRef<HTMLSpanElement>(null);
   const prev = useRef(0);
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
+    const fmt = (v: number) => `${prefix}${Math.round(v).toLocaleString()}${suffix}`;
     if (reducedMotion()) {
-      el.textContent = `${value}${suffix}`;
+      el.textContent = fmt(value);
       prev.current = value;
       return;
     }
@@ -62,10 +63,10 @@ export function CountUp({ value, suffix = '' }: { value: number; suffix?: string
       duration: 700,
       ease: 'out(4)',
       onUpdate: () => {
-        el.textContent = `${Math.round(counter.v)}${suffix}`;
+        el.textContent = fmt(counter.v);
       },
     });
     prev.current = value;
-  }, [value, suffix]);
-  return <span ref={ref}>{`${value}${suffix}`}</span>;
+  }, [value, prefix, suffix]);
+  return <span ref={ref}>{`${prefix}${value.toLocaleString()}${suffix}`}</span>;
 }
