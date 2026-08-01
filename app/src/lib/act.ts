@@ -3,14 +3,13 @@ import type { Appointment, DocumentReference, ServiceRequest } from '@medplum/fh
 import type { FhirStore } from './medplum.server';
 import type { IntentConfig, IntentContext } from './intents/shared';
 import type { ReasonOutput } from './reason';
-import { phoneOf } from './intents/shared';
 import { checkEligibility, sendAttachment275, submitClaim837, submitPriorAuth278 } from './stedi.server';
-import { sendFax, sendSms } from './twilio.server';
 
 /**
  * Step 6 dispatch: the only other place allowed to branch on intent (besides
- * parse-intent). Twilio and Stedi are the two permitted PHI receivers, so the
- * de-redacted artifact may be handed to them — and nowhere else.
+ * parse-intent). Stedi is the only permitted PHI receiver, so the de-redacted
+ * artifact may be handed to it — and nowhere else. Patient-facing outreach is
+ * recorded as a Medplum Communication rather than dispatched to a carrier.
  */
 
 export interface ActionTaken {
@@ -46,8 +45,6 @@ export async function act(
         detail: `Appeal packet transmitted to ${ctx.meta.payer} (control ${attachment.controlNumber})`,
         simulated: attachment.simulated,
       });
-      const fax = await sendFax('+15555550111', finalArtifact);
-      actions.push({ action: 'fax-appeal-letter', detail: `Fax dispatched (${fax.sid})`, simulated: fax.simulated });
       const resubmit = await submitClaim837({ claimRef: ctx.claimRef, frequencyCode: '7' });
       actions.push({
         action: 'edi-837-resubmission',
@@ -103,8 +100,10 @@ export async function act(
         });
       }
 
-      const sms = await sendSms(phoneOf(ctx.patient) ?? '+15555550100', finalArtifact);
-      actions.push({ action: 'sms-outreach', detail: `Outreach SMS ${sms.sid} → ${sms.to}`, simulated: sms.simulated });
+      actions.push({
+        action: 'outreach-message-recorded',
+        detail: 'Patient outreach message written to the record for the care team to send',
+      });
       break;
     }
 

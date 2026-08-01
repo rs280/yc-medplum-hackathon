@@ -59,7 +59,6 @@ export default async function Dashboard() {
     ['Moss', mossMode() === 'moss' ? 'live' : 'lexical fallback'],
     ['Reason', reasonEngine() === 'anthropic' ? 'claude' : 'template'],
     ['Stedi', process.env.STEDI_API_KEY ? 'live' : 'simulated'],
-    ['Twilio', process.env.TWILIO_ACCOUNT_SID ? 'live' : 'simulated'],
   ];
 
   return (

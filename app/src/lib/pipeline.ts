@@ -21,7 +21,7 @@ import { retrieve } from './retrieve';
  *   3. retrieve          Moss (all intents) + PubMed (denial-appeal only)
  *   4. reason            LLM on redacted context, citation-validated JSON
  *   5. de-redact         re-inject PHI server-side (fail closed)
- *   6. write outcome     Task + Communication + AuditEvent, dispatch Stedi/Twilio
+ *   6. write outcome     Task + Communication + AuditEvent, dispatch via Stedi
  *   7. learn             episodic record + playbook aggregate + Moss re-index
  */
 
@@ -141,7 +141,7 @@ export async function runPipeline(resource: Resource): Promise<PipelineResult> {
     }
     step('de-redact', '— PHI re-injected server-side');
 
-    // 6 ── act (Stedi/Twilio are the only permitted PHI receivers) + write outcome
+    // 6 ── act (Stedi is the only permitted PHI receiver) + write outcome
     const actions = await act(store, intent, ctx, reasoned, finalArtifact);
     step('act', `— ${actions.map((a) => a.action).join(', ') || 'no dispatch'}`);
 

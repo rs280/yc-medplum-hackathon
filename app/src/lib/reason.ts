@@ -146,7 +146,7 @@ function templateOutput(
         rationale: `Template appeal for ${meta.denialCode} built from ${sources.length} retrieved sources${learned ? ', reusing previously winning arguments from the learned playbook' : ''}.`,
         letter,
         keyArguments: args.map((a) => a.replace(MARKER_RE, '').trim()),
-        actions: ['send-appeal-275', 'fax-appeal-letter', 'resubmit-837-replacement'],
+        actions: ['send-appeal-275', 'resubmit-837-replacement'],
         citations: [criteria?.id, playbook?.id, learned?.id, ...pmids.slice(0, 2).map((p) => p.id)].filter(
           (x): x is string => Boolean(x),
         ),
@@ -191,7 +191,7 @@ function templateOutput(
           'Book surgical follow-up within 7-14 days',
           ...(gapCount ? [`Close overdue screening: ${meta.overdueList}`] : []),
         ],
-        actions: ['book-follow-up', ...(gapCount ? ['close-care-gaps'] : []), 'send-sms'],
+        actions: ['book-follow-up', ...(gapCount ? ['close-care-gaps'] : []), 'record-outreach-message'],
         citations: protocol ? [protocol.id] : [],
       };
     }

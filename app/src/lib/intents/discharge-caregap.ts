@@ -11,7 +11,7 @@ export const dischargeCaregap: IntentConfig = {
   systemPrompt:
     'You are the discharge-coordination agent of an autonomous healthcare back office. After a patient is discharged you plan the follow-up outreach, screen for red-flag symptoms per protocol, and close overdue preventive care gaps in the same touch.',
   instruction:
-    'Plan the post-discharge outreach for the encounter in the context. From the retrieved protocol, list the red-flag symptoms to screen for (cite with [MOSS:<id>]), propose the follow-up window, and address EVERY overdue preventive-care gap listed. Set decision to "outreach-planned". Put the patient-facing outreach message (SMS, max ~450 characters, warm and plain-language, using the placeholder tokens for the patient name) in `letter`; put the red flags and gap plan in `keyArguments`.',
+    'Plan the post-discharge outreach for the encounter in the context. From the retrieved protocol, list the red-flag symptoms to screen for (cite with [MOSS:<id>]), propose the follow-up window, and address EVERY overdue preventive-care gap listed. Set decision to "outreach-planned". Put the patient-facing outreach message (max ~450 characters, warm and plain-language, using the placeholder tokens for the patient name) in `letter`; put the red flags and gap plan in `keyArguments`.',
   async buildContext(trigger, store) {
     const encounter = trigger as Encounter;
     const patientRef = encounter.subject?.reference;
