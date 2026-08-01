@@ -1,5 +1,5 @@
 import 'server-only';
-import Anthropic from '@anthropic-ai/sdk';
+import { getLlmClient, isLlmConfigured, reasonModelId } from './llmClient';
 import type { Redacted } from '@/types/redacted';
 import type { IntentConfig } from './intents/shared';
 import type { RetrievedSource } from './retrieve';
@@ -41,19 +41,13 @@ const RESPONSE_SCHEMA = {
 const GLOBAL_RULES = `
 HARD RULES:
 1. The context is de-identified. Placeholder tokens like [NAME_1], [DOB_1], [MRN_1], [ID_1], [PHONE_1] stand for real values and MUST be reproduced exactly as written wherever you refer to that detail. Never invent names, dates of birth, or identifiers.
-2. Cite evidence ONLY with inline markers [MOSS:<id>] or [PMID:<id>] whose ids appear in RETRIEVED SOURCES below. Citing anything else is forbidden — uncited or falsely-cited lines will be deleted by a validator.
+2. Cite evidence ONLY with inline markers [MOSS:<id>], [MEMORY:<id>], or [PMID:<id>] whose ids appear in RETRIEVED SOURCES below. Citing anything else is forbidden — uncited or falsely-cited lines will be deleted by a validator.
+2b. A [MEMORY:*] source is what THIS back office actually did on a previous run of a related case. Treat it as institutional experience: reuse an approach recorded as WON, and strengthen or change one recorded as LOST. When a prior run on the same claim already established a fact (e.g. triage flagged a missing authorization), say so explicitly and cite it.
 3. Respond with JSON matching the required schema. "citations" lists exactly the source ids you actually used.`;
 
-const g = globalThis as unknown as { __anthropic?: Anthropic };
-
-function getClient(): Anthropic | null {
-  if (!process.env.ANTHROPIC_API_KEY) return null;
-  g.__anthropic ??= new Anthropic({ timeout: 120_000, maxRetries: 1 });
-  return g.__anthropic;
-}
-
+// 'anthropic' means "LLM-backed" (direct or via OpenRouter); 'template' is the no-key fallback.
 export function reasonEngine(): 'anthropic' | 'template' {
-  return process.env.ANTHROPIC_API_KEY ? 'anthropic' : 'template';
+  return isLlmConfigured() ? 'anthropic' : 'template';
 }
 
 function sourcesBlock(sources: RetrievedSource[]): string {
@@ -61,7 +55,7 @@ function sourcesBlock(sources: RetrievedSource[]): string {
   return sources.map((s) => `[${s.id}] ${s.title}\n${s.text}`).join('\n\n');
 }
 
-const MARKER_RE = /\[(?:PMID|MOSS):[^\]\s]+\]/g;
+const MARKER_RE = /\[(?:PMID|MOSS|MEMORY):[^\]\s]+\]/g;
 
 /**
  * Citation integrity: keep only markers whose source id was actually
@@ -101,6 +95,7 @@ function templateOutput(
   const criteria = sources.find((s) => s.kind === 'moss' && s.title.startsWith('criteria'));
   const playbook = sources.find((s) => s.kind === 'moss' && (s.id.includes('pb-') || s.id.includes('learned-')));
   const learned = sources.find((s) => s.id.startsWith('MOSS:learned-'));
+  const priorRun = sources.find((s) => s.kind === 'memory');
   const pmids = sources.filter((s) => s.kind === 'pubmed');
   const hasMemberTokens = contextText.includes('[NAME_1]');
   const memberLine = hasMemberTokens ? 'Member: [NAME_1] (DOB [DOB_1], MRN [MRN_1])' : '';
@@ -111,6 +106,11 @@ function templateOutput(
       if (criteria) {
         args.push(
           `The service met ${meta.payer}'s own published coverage criteria at the time of service: ${firstSentence(criteria.text)} The documented clinical facts satisfy each element. [${criteria.id}]`,
+        );
+      }
+      if (priorRun) {
+        args.push(
+          `Our own prior handling of this case is on record and supports the appeal: ${priorRun.text} [${priorRun.id}]`,
         );
       }
       if (learned) {
@@ -229,7 +229,7 @@ export async function reason(
   meta: Record<string, string>,
 ): Promise<ReasonOutput> {
   const allowed = new Set(sources.map((s) => s.id));
-  const client = getClient();
+  const client = getLlmClient();
 
   let raw: Omit<ReasonOutput, 'engine' | 'droppedCitations'> | null = null;
   let engine: ReasonOutput['engine'] = 'template';
@@ -237,7 +237,7 @@ export async function reason(
   if (client) {
     try {
       const response = await client.messages.create({
-        model: process.env.ANTHROPIC_MODEL || 'claude-opus-4-8',
+        model: reasonModelId(),
         max_tokens: 8000,
         system: `${intent.systemPrompt}\n${GLOBAL_RULES}`,
         output_config: {
