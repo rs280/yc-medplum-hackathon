@@ -3,7 +3,6 @@ import { chatModelId, chatModelOptions } from '@/lib/llmClient';
 import { getStore } from '@/lib/medplum.server';
 import { mossMode } from '@/lib/moss.server';
 import { reasonEngine } from '@/lib/reason';
-import { whatsappMode } from '@/lib/whatsapp.server';
 import { AutoRefresh } from '@/components/AutoRefresh';
 import { Copilot } from '@/components/Copilot';
 import { Sidebar } from '@/components/Sidebar';
@@ -22,7 +21,6 @@ export default async function WorkspaceLayout({ children }: { children: ReactNod
     ['Moss', mossMode() === 'moss' ? 'live' : 'lexical fallback', mossMode() === 'moss'],
     ['Reason', reasonEngine() === 'anthropic' ? 'claude' : 'template', reasonEngine() === 'anthropic'],
     ['Stedi', process.env.STEDI_API_KEY ? 'live' : 'simulated', Boolean(process.env.STEDI_API_KEY)],
-    ['WhatsApp', whatsappMode(), whatsappMode() === 'live'],
   ];
 
   return (

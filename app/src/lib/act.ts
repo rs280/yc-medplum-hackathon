@@ -1,16 +1,15 @@
 import 'server-only';
 import type { Appointment, DocumentReference, ServiceRequest } from '@medplum/fhirtypes';
 import type { FhirStore } from './medplum.server';
-import { phoneOf, type IntentConfig, type IntentContext } from './intents/shared';
+import type { IntentConfig, IntentContext } from './intents/shared';
 import type { ReasonOutput } from './reason';
 import { checkEligibility, sendAttachment275, submitClaim837, submitPriorAuth278 } from './stedi.server';
-import { sendWhatsAppText } from './whatsapp.server';
 
 /**
  * Step 6 dispatch: the only other place allowed to branch on intent (besides
- * parse-intent). Stedi and WhatsApp (patient's own phone) are the only
- * permitted PHI receivers, so the de-redacted artifact may be handed to them —
- * and nowhere else.
+ * parse-intent). Stedi is the only permitted PHI receiver, so the de-redacted
+ * artifact may be handed to it — and nowhere else. Patient-facing outreach is
+ * recorded as a Medplum Communication rather than dispatched to a carrier.
  */
 
 export interface ActionTaken {
@@ -101,20 +100,10 @@ export async function act(
         });
       }
 
-      const patientPhone = phoneOf(ctx.patient);
-      if (patientPhone && finalArtifact) {
-        const sent = await sendWhatsAppText(patientPhone, finalArtifact);
-        actions.push({
-          action: 'whatsapp-outreach-sent',
-          detail: `Outreach message ${sent.simulated ? 'queued for' : 'delivered to'} patient via WhatsApp (${sent.messageId})`,
-          simulated: sent.simulated,
-        });
-      } else {
-        actions.push({
-          action: 'outreach-message-recorded',
-          detail: 'No patient phone on file — outreach message written to the record for the care team to send',
-        });
-      }
+      actions.push({
+        action: 'outreach-message-recorded',
+        detail: 'Patient outreach message written to the record for the care team to send',
+      });
       break;
     }
 
