@@ -15,11 +15,11 @@ import { Stagger } from '@/components/anim';
 export const dynamic = 'force-dynamic';
 
 /**
- * Patients: intake record + the full journey the agents automate — from
- * registration through encounters, orders, claims, denials/appeals, and the
- * follow-ups the discharge agent books. This is the clinician-side (EHR)
- * authorized view of demo data; the redaction guarantee governs what leaves
- * the server to external services, not this chart.
+ * Patients: the full panel (seed hero + Synthea-generated patients), with the
+ * hero's journey expanded — from registration through encounters, orders,
+ * claims, denials/appeals, and the follow-ups the agents book. This is the
+ * clinician-side (EHR) authorized view of synthetic data; the redaction
+ * guarantee governs what leaves the server to external services.
  */
 
 const KIND_ICON: Record<TimelineEvent['kind'], typeof UserPlus> = {
@@ -39,86 +39,116 @@ function fmtWhen(iso: string): string {
   return `${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} · ${d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`;
 }
 
+function initials(name: string): string {
+  return name.split(' ').map((w) => w[0]).slice(0, 2).join('');
+}
+
 export default async function PatientsPage() {
   const patients = await listPatients();
-  const timelines = await Promise.all(patients.map((p) => patientTimeline(p.id)));
+  const hero = patients.find((p) => p.mrn === 'MRN-001234') ?? patients[0];
+  const events = hero ? await patientTimeline(hero.id) : [];
+  const roster = patients.filter((p) => p.id !== hero?.id);
 
   return (
     <>
       <div className="page-head">
         <h1>Patients</h1>
-        <p>Intake through post-visit — every event the agents create lands on this journey automatically.</p>
+        <p>
+          {patients.length} on the panel — realistic synthetic records generated with Synthea. Every event the agents
+          create lands on a patient&apos;s journey automatically.
+        </p>
       </div>
 
       {patients.length === 0 && (
         <div className="card">
           <p className="empty">
-            No patients yet — run <code>npm run seed</code>.
+            No patients yet — run <code>npm run seed</code> and <code>npm run seed:synthea</code>.
           </p>
         </div>
       )}
 
-      {patients.map((p, pi) => {
-        const events = timelines[pi];
-        const agentEvents = events.filter((e) => e.kind === 'agent' || e.kind === 'appointment').length;
-        return (
-          <section key={p.id}>
-            <div className="card patient-card">
-              <div className="patient-id">
-                <span className="avatar">{p.name.split(' ').map((w) => w[0]).slice(0, 2).join('')}</span>
-                <div>
-                  <div className="patient-name">{p.name}</div>
-                  <div className="patient-meta">
-                    {p.mrn && <span>MRN {p.mrn}</span>}
-                    {p.dob && <span>DOB {p.dob}</span>}
-                    {p.phone && <span>{p.phone}</span>}
-                  </div>
+      {hero && (
+        <>
+          <div className="card patient-card">
+            <div className="patient-id">
+              <span className="avatar">{initials(hero.name)}</span>
+              <div>
+                <div className="patient-name">{hero.name}</div>
+                <div className="patient-meta">
+                  {hero.mrn && <span>MRN {hero.mrn}</span>}
+                  {hero.dob && <span>DOB {hero.dob}</span>}
+                  {hero.phone && <span>{hero.phone}</span>}
                 </div>
               </div>
-              <div className="patient-coverage">
-                <div className="label">Coverage</div>
-                <div className="patient-payer">{p.payer ?? 'Self-pay'}</div>
-                {p.planId && <div className="patient-meta">Member {p.planId}</div>}
-              </div>
-              <div className="patient-coverage">
-                <div className="label">Agent activity</div>
-                <div className="patient-payer">{agentEvents} automated event(s)</div>
-                <div className="patient-meta">{events.length} total on record</div>
-              </div>
             </div>
+            <div className="patient-coverage">
+              <div className="label">Coverage</div>
+              <div className="patient-payer">{hero.payer ?? 'Self-pay'}</div>
+              {hero.planId && <div className="patient-meta">Member {hero.planId}</div>}
+            </div>
+            <div className="patient-coverage">
+              <div className="label">Agent activity</div>
+              <div className="patient-payer">
+                {events.filter((e) => e.kind === 'agent' || e.kind === 'appointment').length} automated event(s)
+              </div>
+              <div className="patient-meta">{events.length} total on record</div>
+            </div>
+          </div>
 
-            <div className="card">
-              <h2>Journey</h2>
-              {events.length === 0 ? (
-                <p className="empty">Nothing on record yet.</p>
-              ) : (
-                <Stagger signal={events.length}>
-                  <div className="journey">
-                    {events.map((e, i) => {
-                      const Icon = KIND_ICON[e.kind];
-                      return (
-                        <div key={i} className={`journey-item kind-${e.kind}`}>
-                          <span className="journey-icon">
-                            <Icon size={14} strokeWidth={2} aria-hidden />
-                          </span>
-                          <div className="journey-body">
-                            <div className="journey-title-row">
-                              <span className="journey-title">{e.title}</span>
-                              {e.badge && <span className={`badge tone-${e.badge.tone}`}>{e.badge.label}</span>}
-                              <span className="journey-when">{fmtWhen(e.at)}</span>
-                            </div>
-                            {e.detail && <div className="journey-detail">{e.detail}</div>}
+          <div className="card">
+            <h2>{hero.name.split(' ')[0]}&apos;s journey</h2>
+            {events.length === 0 ? (
+              <p className="empty">Nothing on record yet.</p>
+            ) : (
+              <Stagger signal={events.length}>
+                <div className="journey">
+                  {events.map((e, i) => {
+                    const Icon = KIND_ICON[e.kind];
+                    return (
+                      <div key={i} className={`journey-item kind-${e.kind}`}>
+                        <span className="journey-icon">
+                          <Icon size={14} strokeWidth={2} aria-hidden />
+                        </span>
+                        <div className="journey-body">
+                          <div className="journey-title-row">
+                            <span className="journey-title">{e.title}</span>
+                            {e.badge && <span className={`badge tone-${e.badge.tone}`}>{e.badge.label}</span>}
+                            <span className="journey-when">{fmtWhen(e.at)}</span>
                           </div>
+                          {e.detail && <div className="journey-detail">{e.detail}</div>}
                         </div>
-                      );
-                    })}
+                      </div>
+                    );
+                  })}
+                </div>
+              </Stagger>
+            )}
+          </div>
+        </>
+      )}
+
+      {roster.length > 0 && (
+        <div className="card">
+          <h2>Rest of the panel</h2>
+          <Stagger signal={roster.length}>
+            <div className="roster">
+              {roster.map((p) => (
+                <div key={p.id} className="roster-card">
+                  <span className="avatar avatar-sm">{initials(p.name)}</span>
+                  <div className="roster-body">
+                    <div className="roster-name">{p.name}</div>
+                    <div className="patient-meta">
+                      {p.mrn && <span>{p.mrn}</span>}
+                      {p.dob && <span>DOB {p.dob}</span>}
+                    </div>
+                    <div className="roster-payer">{p.payer ?? 'Self-pay'}</div>
                   </div>
-                </Stagger>
-              )}
+                </div>
+              ))}
             </div>
-          </section>
-        );
-      })}
+          </Stagger>
+        </div>
+      )}
     </>
   );
 }

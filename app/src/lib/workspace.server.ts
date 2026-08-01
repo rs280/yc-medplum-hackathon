@@ -290,7 +290,9 @@ export interface PortalItem {
  */
 export async function patientPortal(): Promise<{ patient?: PatientSummary; items: PortalItem[] }> {
   const patients = await listPatients();
-  const patient = patients[0];
+  // The hero of the demo story is the original seed patient; Synthea patients
+  // fill out the roster but don't hijack the phone.
+  const patient = patients.find((p) => p.mrn === 'MRN-001234') ?? patients[0];
   if (!patient) return { patient: undefined, items: [] };
   const store = await getStore();
   const ref = `Patient/${patient.id}`;

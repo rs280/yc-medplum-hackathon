@@ -1,0 +1,260 @@
+[
+  {
+    "syntheaId": "f9ba83f7-9940-16ae-0854-24bd34bf1843",
+    "mrn": "MRN-F9BA83",
+    "given": [
+      "Ashlee"
+    ],
+    "family": "Tromp",
+    "gender": "female",
+    "birthDate": "1971-11-23",
+    "phone": "555-954-2559",
+    "city": "Barnstable",
+    "payer": "Medicare",
+    "encounters": [
+      {
+        "id6": "f9ba83",
+        "type": "Encounter for check up (procedure)",
+        "start": "2025-06-24T22:34:23+00:00",
+        "end": "2025-06-25T02:35:43+00:00"
+      },
+      {
+        "id6": "f9ba83",
+        "type": "General examination of patient (procedure)",
+        "start": "2026-06-16T22:34:23+00:00",
+        "end": "2026-06-16T23:22:31+00:00"
+      }
+    ],
+    "claims": [
+      {
+        "id6": "f9ba83",
+        "created": "2026-06-16T23:22:31+00:00",
+        "total": 411.14,
+        "procedure": "60 ACTUAT Fluticasone propionate 0.25 MG/ACTUAT / salmeterol 0.05 MG/ACTUAT Dry Powder Inhaler",
+        "payer": "Medicare"
+      },
+      {
+        "id6": "f9ba83",
+        "created": "2026-06-16T23:22:31+00:00",
+        "total": 12546.57,
+        "procedure": "General examination of patient (procedure)",
+        "payer": "Medicare"
+      }
+    ]
+  },
+  {
+    "syntheaId": "958988d0-ad72-fe02-722e-f81e0e2cbf47",
+    "mrn": "MRN-958988",
+    "given": [
+      "Aleida"
+    ],
+    "family": "Terry",
+    "gender": "female",
+    "birthDate": "1988-09-13",
+    "phone": "555-618-2000",
+    "city": "Ipswich",
+    "payer": "Humana",
+    "encounters": [
+      {
+        "id6": "958988",
+        "type": "Encounter for check up (procedure)",
+        "start": "2026-02-10T00:08:48+00:00",
+        "end": "2026-02-10T04:00:33+00:00"
+      },
+      {
+        "id6": "958988",
+        "type": "Encounter for symptom (procedure)",
+        "start": "2026-03-05T16:08:48+00:00",
+        "end": "2026-03-05T16:23:48+00:00"
+      }
+    ],
+    "claims": [
+      {
+        "id6": "958988",
+        "created": "2026-03-05T16:23:48+00:00",
+        "total": 234.72,
+        "procedure": "Amoxicillin 250 MG / Clavulanate 125 MG Oral Tablet",
+        "payer": "Humana"
+      },
+      {
+        "id6": "958988",
+        "created": "2026-03-05T16:23:48+00:00",
+        "total": 85.55,
+        "procedure": "Encounter for symptom (procedure)",
+        "payer": "Humana"
+      }
+    ]
+  },
+  {
+    "syntheaId": "73b97ede-ebda-6de2-36c8-c7c6cc9ad9ff",
+    "mrn": "MRN-73B97E",
+    "given": [
+      "Buddy"
+    ],
+    "family": "Boyle",
+    "gender": "male",
+    "birthDate": "1985-08-31",
+    "phone": "555-212-2993",
+    "city": "Turners Falls",
+    "payer": "Medicaid",
+    "encounters": [
+      {
+        "id6": "73b97e",
+        "type": "Encounter for check up (procedure)",
+        "start": "2022-12-03T06:56:49+00:00",
+        "end": "2022-12-03T12:11:41+00:00"
+      },
+      {
+        "id6": "73b97e",
+        "type": "General examination of patient (procedure)",
+        "start": "2025-09-06T06:56:49+00:00",
+        "end": "2025-09-06T07:47:02+00:00"
+      }
+    ],
+    "claims": [
+      {
+        "id6": "73b97e",
+        "created": "2022-12-03T12:11:41+00:00",
+        "total": 4830.95,
+        "procedure": "Encounter for check up (procedure)",
+        "payer": "Medicaid"
+      },
+      {
+        "id6": "73b97e",
+        "created": "2025-09-06T07:47:02+00:00",
+        "total": 3800.84,
+        "procedure": "General examination of patient (procedure)",
+        "payer": "Medicaid"
+      }
+    ]
+  },
+  {
+    "syntheaId": "139cd667-593c-c80f-ece7-7561016c43db",
+    "mrn": "MRN-139CD6",
+    "given": [
+      "Bethann"
+    ],
+    "family": "McClure",
+    "gender": "female",
+    "birthDate": "2024-11-11",
+    "phone": "555-435-5682",
+    "city": "Norwood",
+    "payer": "UnitedHealthcare",
+    "encounters": [
+      {
+        "id6": "139cd6",
+        "type": "Encounter for symptom (procedure)",
+        "start": "2026-02-10T13:38:43+00:00",
+        "end": "2026-02-10T13:53:43+00:00"
+      },
+      {
+        "id6": "139cd6",
+        "type": "Well child visit (procedure)",
+        "start": "2026-04-20T03:38:43+00:00",
+        "end": "2026-04-20T03:53:43+00:00"
+      }
+    ],
+    "claims": [
+      {
+        "id6": "139cd6",
+        "created": "2026-02-10T13:53:43+00:00",
+        "total": 85.55,
+        "procedure": "Encounter for symptom (procedure)",
+        "payer": "UnitedHealthcare"
+      },
+      {
+        "id6": "139cd6",
+        "created": "2026-04-20T03:53:43+00:00",
+        "total": 1135.6,
+        "procedure": "Well child visit (procedure)",
+        "payer": "UnitedHealthcare"
+      }
+    ]
+  },
+  {
+    "syntheaId": "4856d816-b2ac-e1b6-5ace-4eafd4a8e86e",
+    "mrn": "MRN-4856D8",
+    "given": [
+      "Benny"
+    ],
+    "family": "Lowe",
+    "gender": "male",
+    "birthDate": "1999-06-17",
+    "phone": "555-789-6000",
+    "city": "Boston",
+    "payer": "Blue Cross Blue Shield",
+    "encounters": [
+      {
+        "id6": "4856d8",
+        "type": "Encounter for check up (procedure)",
+        "start": "2026-06-25T12:47:19+00:00",
+        "end": "2026-06-25T16:34:08+00:00"
+      },
+      {
+        "id6": "4856d8",
+        "type": "Encounter for problem (procedure)",
+        "start": "2026-07-02T12:47:19+00:00",
+        "end": "2026-07-02T13:51:42+00:00"
+      }
+    ],
+    "claims": [
+      {
+        "id6": "4856d8",
+        "created": "2026-06-25T16:34:08+00:00",
+        "total": 3105.35,
+        "procedure": "Encounter for check up (procedure)",
+        "payer": "Blue Cross Blue Shield"
+      },
+      {
+        "id6": "4856d8",
+        "created": "2026-07-02T13:51:42+00:00",
+        "total": 976.03,
+        "procedure": "Encounter for problem (procedure)",
+        "payer": "Blue Cross Blue Shield"
+      }
+    ]
+  },
+  {
+    "syntheaId": "4c756282-9faf-4e7b-1689-3e3a3cb39537",
+    "mrn": "MRN-4C7562",
+    "given": [
+      "Denver"
+    ],
+    "family": "Hickle",
+    "gender": "male",
+    "birthDate": "2016-09-18",
+    "phone": "555-251-4610",
+    "city": "Pittsfield",
+    "payer": "NO_INSURANCE",
+    "encounters": [
+      {
+        "id6": "4c7562",
+        "type": "Encounter for check up (procedure)",
+        "start": "2024-09-22T14:29:00+00:00",
+        "end": "2024-09-22T20:51:44+00:00"
+      },
+      {
+        "id6": "4c7562",
+        "type": "Well child visit (procedure)",
+        "start": "2025-09-21T14:29:00+00:00",
+        "end": "2025-09-21T14:44:00+00:00"
+      }
+    ],
+    "claims": [
+      {
+        "id6": "4c7562",
+        "created": "2024-09-22T20:51:44+00:00",
+        "total": 5262.35,
+        "procedure": "Encounter for check up (procedure)",
+        "payer": "NO_INSURANCE"
+      },
+      {
+        "id6": "4c7562",
+        "created": "2025-09-21T14:44:00+00:00",
+        "total": 272.8,
+        "procedure": "Well child visit (procedure)",
+        "payer": "NO_INSURANCE"
+      }
+    ]
+  }
+]

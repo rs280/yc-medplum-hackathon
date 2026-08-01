@@ -8,6 +8,7 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "seed": "node --env-file-if-exists=.env --conditions=react-server --import=tsx scripts/seed.ts",
+    "seed:synthea": "node --env-file-if-exists=.env --conditions=react-server --import=tsx scripts/seed-synthea.ts",
     "subscriptions": "node --env-file-if-exists=.env --conditions=react-server --import=tsx scripts/subscriptions.ts",
     "index-moss": "node --env-file-if-exists=.env --conditions=react-server --import=tsx scripts/index-moss.ts",
     "demo": "node --env-file-if-exists=.env --conditions=react-server --import=tsx scripts/demo.ts"
