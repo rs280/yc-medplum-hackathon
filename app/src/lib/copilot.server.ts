@@ -172,59 +172,6 @@ function shortId(): string {
   return Date.now().toString(36).toUpperCase().slice(-6);
 }
 
-/**
- * AI intake: the copilot collects name/DOB/insurance conversationally, then
- * calls this — creates the Patient + Coverage and verifies eligibility via
- * the Stedi 270/271 path, exactly like a front-desk registration.
- */
-export async function registerPatient(opts: {
-  name: string;
-  birthDate?: string;
-  phone?: string;
-  payer: string;
-  memberId?: string;
-}): Promise<{ summary: string; mrn: string }> {
-  const store = await getStore();
-  const existing = await findPatientByName(store, opts.name);
-  if (existing) {
-    const mrn = existing.identifier?.[0]?.value ?? existing.id!;
-    return { summary: `${patientDisplayName(existing)} is already registered (MRN ${mrn}).`, mrn };
-  }
-
-  const parts = opts.name.trim().split(/\s+/);
-  const family = parts.length > 1 ? parts[parts.length - 1] : undefined;
-  const given = parts.length > 1 ? parts.slice(0, -1) : parts;
-  const mrn = `MRN-NEW-${shortId()}`;
-
-  const patient = await store.create<Patient>({
-    resourceType: 'Patient',
-    identifier: [{ system: IDS, value: mrn }],
-    name: [{ given, family }],
-    birthDate: opts.birthDate,
-    telecom: opts.phone ? [{ system: 'phone', value: opts.phone, use: 'mobile' }] : undefined,
-  });
-  await store.create<Coverage>({
-    resourceType: 'Coverage',
-    identifier: [{ system: IDS, value: `COV-${mrn}` }],
-    status: 'active',
-    beneficiary: { reference: `Patient/${patient.id}` },
-    subscriberId: opts.memberId,
-    payor: [{ display: opts.payer }],
-  });
-  const elig = await checkEligibility(opts.payer);
-  await writeAudit(store, {
-    subtype: 'intake',
-    description: `New patient registered via copilot; eligibility 270/271 → plan ${elig.planStatus}, prior-auth indicator ${elig.authOrCertIndicator}${elig.simulated ? ' (simulated)' : ''}`,
-    entities: [`Patient/${patient.id}`],
-  });
-  return {
-    summary:
-      `Registered ${opts.name} (MRN ${mrn}) with ${opts.payer}${opts.memberId ? ` member ${opts.memberId}` : ''}. ` +
-      `Eligibility check: plan ${elig.planStatus}; prior authorization ${elig.authOrCertIndicator === 'Y' ? 'REQUIRED for imaging — the triage agent will catch this' : 'not indicated'}.`,
-    mrn,
-  };
-}
-
 /** Look up a registered patient's insurance and run a fresh 270/271 eligibility check. */
 export async function checkCoverage(patientName: string): Promise<{ summary: string }> {
   const store = await getStore();

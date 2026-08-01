@@ -20,10 +20,21 @@ import {
   fireEvent,
   latestArtifact,
   recentRuns,
-  registerPatient,
   statusSnapshot,
   type CopilotEvent,
 } from '@/lib/copilot.server';
+import { chartForAgent, regeneratePatientOverview } from '@/lib/patientChart.server';
+import {
+  addClinicalNote,
+  findPatientByName,
+  patientDisplayName,
+  registerPatient,
+  requirePatient,
+  updateCoverage,
+  updateDemographics,
+} from '@/lib/patients.server';
+import { getStore } from '@/lib/medplum.server';
+import { recordVitals } from '@/lib/vitals.server';
 import {
   describeForAgent,
   describeForPanel,
@@ -31,7 +42,11 @@ import {
   type AttachedImage,
 } from '@/lib/documentRedaction.server';
 import { approveDraft, listPending, rejectDraft } from '@/lib/approvals.server';
+import { CRITERIA_INDEX, PLAYBOOK_INDEX, mossSearch } from '@/lib/moss.server';
 import type { PipelineStepEvent } from '@/lib/pipeline';
+import { searchPubMed } from '@/lib/pubmed.server';
+import type { Redacted } from '@/types/redacted';
+import type { Patient } from '@medplum/fhirtypes';
 
 export const maxDuration = 300;
 
@@ -265,6 +280,135 @@ const TOOLS: Anthropic.Tool[] = [
       additionalProperties: false,
     },
   },
+  {
+    name: 'get_patient_chart',
+    description:
+      "Open one patient's chart: age and sex, insurance, latest vital signs with BMI, their visits, the chart overview, documents on file, and recent journey events. Identifiers come back masked to their last four characters — read them back that way and never guess the rest. Call this before answering a question about a specific patient, and before editing anything on their chart.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        patientName: { type: 'string', description: 'Full or partial name' },
+        patientId: { type: 'string', description: 'FHIR id from an earlier tool result — preferred when you have it' },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'update_patient',
+    description:
+      "Correct or fill in a patient's demographics. Only the fields you pass are changed. Use this when someone tells you a detail is wrong or missing — never to 'tidy up' something nobody asked about.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        patientName: { type: 'string' },
+        patientId: { type: 'string' },
+        name: { type: 'string', description: 'Corrected full name' },
+        sex: { type: 'string', enum: ['male', 'female', 'other', 'unknown'] },
+        birthDate: { type: 'string', description: 'YYYY-MM-DD' },
+        phone: { type: 'string' },
+        email: { type: 'string' },
+        addressLine: { type: 'string' },
+        city: { type: 'string' },
+        state: { type: 'string' },
+        postalCode: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'update_coverage',
+    description:
+      "Change a patient's insurance. Creates coverage if they have none. Changing the payer re-runs the 270/271 eligibility check and the result comes back in the summary.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        patientName: { type: 'string' },
+        patientId: { type: 'string' },
+        payer: { type: 'string', description: 'Insurance company, e.g. Aetna' },
+        memberId: { type: 'string' },
+        groupNumber: { type: 'string' },
+        status: { type: 'string', enum: ['active', 'cancelled'] },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'record_vitals',
+    description:
+      'Record vital signs. Pass US customary when someone speaks in feet and pounds (heightIn, weightLb) or metric when they use centimetres and kilograms. BMI is computed from height and weight — never pass one. Systolic and diastolic must be given together.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        patientName: { type: 'string' },
+        patientId: { type: 'string' },
+        heightIn: { type: 'number', description: 'Height in inches' },
+        heightCm: { type: 'number' },
+        weightLb: { type: 'number', description: 'Weight in pounds' },
+        weightKg: { type: 'number' },
+        systolic: { type: 'number' },
+        diastolic: { type: 'number' },
+        heartRate: { type: 'number', description: 'Beats per minute' },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'add_clinical_note',
+    description:
+      "Write a note onto the patient's chart. It appears on their journey immediately. Use for what someone tells you about a patient that belongs on the record.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        patientName: { type: 'string' },
+        patientId: { type: 'string' },
+        note: { type: 'string', description: 'The note text' },
+        category: { type: 'string', enum: ['clinical note', 'front-desk note', 'phone note'] },
+      },
+      required: ['note'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'regenerate_overview',
+    description:
+      "Rewrite the AI overview at the top of a patient's chart from their current record. Use when the chart says the overview may be out of date, or after you change something significant.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        patientName: { type: 'string' },
+        patientId: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'search_pubmed',
+    description:
+      'Search PubMed for clinical evidence and get back real PMIDs with titles and abstracts. Call this BEFORE answering any clinical question — symptoms, causes, treatment, dosing, screening intervals, what a guideline says — so the answer carries citations the clinician can open. Search the way a clinician would: the condition plus the aspect asked about, e.g. "rheumatoid arthritis treatment DMARD" or "type 2 diabetes screening interval".',
+    input_schema: {
+      type: 'object',
+      properties: {
+        term: { type: 'string', description: 'PubMed query — condition plus the aspect in question' },
+        max: { type: 'integer', description: 'How many articles to return (default 3, max 6)' },
+      },
+      required: ['term'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'search_criteria',
+    description:
+      "Search Moss for this clinic's payer criteria and learned denial playbooks, returning MOSS ids. Call this for coverage questions — what a payer requires, whether something needs prior authorization, what has beaten a denial code before. Moss indexes payer policy and appeal history, not medical literature; use search_pubmed for clinical questions.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'What to look up, e.g. "MRI lumbar spine prior authorization"' },
+        max: { type: 'integer', description: 'How many passages to return (default 3, max 6)' },
+      },
+      required: ['query'],
+      additionalProperties: false,
+    },
+  },
 ];
 
 const EVENT_LABELS: Record<CopilotEvent, string> = {
@@ -274,6 +418,22 @@ const EVENT_LABELS: Record<CopilotEvent, string> = {
   discharge: 'discharge outreach + care gaps',
   'prior-auth': 'prior-auth packet',
 };
+
+// Tools that report their own inner steps, so the panel can render the trace
+// (and the Sources button can read the ids they retrieved).
+const STREAMS_TRACE = new Set([
+  'run_agent',
+  'complete_visit',
+  'order_scan',
+  'approve_draft',
+  'search_pubmed',
+  'search_criteria',
+]);
+
+/** Keep a model-supplied result count sane; PubMed is rate-limited and the panel is narrow. */
+function clampResults(raw: unknown): number {
+  return typeof raw === 'number' && Number.isFinite(raw) ? Math.min(6, Math.max(1, Math.round(raw))) : 3;
+}
 
 async function executeTool(
   name: string,
@@ -295,6 +455,59 @@ async function executeTool(
         result: artifact ? JSON.stringify(artifact) : 'No artifact found yet — run an agent first.',
         refresh: false,
         detail: artifact ? `${artifact.agent}${artifact.denialCode ? ` · ${artifact.denialCode}` : ''}` : 'none found',
+      };
+    }
+    case 'search_pubmed': {
+      const term = String(input.term);
+      const evidence = await searchPubMed(term as unknown as Redacted, clampResults(input.max));
+      // Same shape the pipeline's retrieve step emits, so the panel's trace and
+      // the Sources button pick these up with no special-casing.
+      onPipelineStep?.({
+        step: 'retrieve',
+        detail: `${evidence.length} article(s) for "${term}"`,
+        data: {
+          sources: evidence.map((e) => ({
+            id: `PMID:${e.pmid}`,
+            kind: 'pubmed',
+            title: e.title,
+            snippet: e.abstract?.slice(0, 220) ?? e.citation,
+          })),
+        },
+      });
+      return {
+        result: evidence.length
+          ? JSON.stringify(evidence.map((e) => ({ id: `PMID:${e.pmid}`, title: e.title, citation: e.citation, abstract: e.abstract })))
+          : `PubMed returned nothing for "${term}". Answer from your own knowledge and say the search came back empty.`,
+        refresh: false,
+        detail: evidence.length ? evidence.map((e) => `PMID:${e.pmid}`).join(', ') : 'no results',
+      };
+    }
+    case 'search_criteria': {
+      const query = String(input.query);
+      const max = clampResults(input.max);
+      const [criteria, playbooks] = await Promise.all([
+        mossSearch(CRITERIA_INDEX, query as unknown as Redacted, max),
+        mossSearch(PLAYBOOK_INDEX, query as unknown as Redacted, max),
+      ]);
+      const hits = [...criteria, ...playbooks].slice(0, max);
+      onPipelineStep?.({
+        step: 'retrieve',
+        detail: `${hits.length} passage(s) for "${query}"`,
+        data: {
+          sources: hits.map((h) => ({
+            id: `MOSS:${h.id}`,
+            kind: 'moss',
+            title: h.metadata?.kind ? `${h.metadata.kind}: ${h.id}` : h.id,
+            snippet: h.text.slice(0, 220),
+          })),
+        },
+      });
+      return {
+        result: hits.length
+          ? JSON.stringify(hits.map((h) => ({ id: `MOSS:${h.id}`, text: h.text.slice(0, 1200) })))
+          : `Moss has nothing indexed for "${query}". Say so rather than guessing at what the payer requires.`,
+        refresh: false,
+        detail: hits.length ? hits.map((h) => `MOSS:${h.id}`).join(', ') : 'no results',
       };
     }
     case 'register_patient': {
@@ -328,11 +541,12 @@ async function executeTool(
         patientName: typeof input.patientName === 'string' ? input.patientName : undefined,
         includeCancelled: input.includeCancelled === true,
       });
-      // Front-desk projection: a first name and last initial, never the id or
-      // full name — this is the one tool that reads the whole roster at once.
+      // Full names, because the copilot serves the clinician who already holds
+      // these charts — and because matching "Jane Doe" against a "Jane D."
+      // projection silently reported her as having no appointments at all.
       const agentRows = rows.map((r) => ({
         handle: r.handle,
-        patient: r.patientShortName,
+        patient: r.patientName,
         what: r.description,
         start: r.start,
         end: r.end,
@@ -419,6 +633,91 @@ async function executeTool(
       });
       return { result: r.summary, refresh: true, detail: r.summary };
     }
+    case 'get_patient_chart': {
+      const store = await getStore();
+      const patient = await requirePatient(store, {
+        patientId: typeof input.patientId === 'string' ? input.patientId : undefined,
+        patientName: typeof input.patientName === 'string' ? input.patientName : undefined,
+      });
+      const chart = await chartForAgent(patient.id!, store);
+      if (!chart) throw new Error('That chart could not be read.');
+      return {
+        result: JSON.stringify(chart),
+        refresh: false,
+        detail: `${chart.patient} · MRN ${chart.mrn ?? '—'}`,
+      };
+    }
+    case 'update_patient': {
+      const r = await updateDemographics({
+        patientId: typeof input.patientId === 'string' ? input.patientId : undefined,
+        patientName: typeof input.patientName === 'string' ? input.patientName : undefined,
+        name: typeof input.name === 'string' ? input.name : undefined,
+        sex: typeof input.sex === 'string' ? input.sex : undefined,
+        birthDate: typeof input.birthDate === 'string' ? input.birthDate : undefined,
+        phone: typeof input.phone === 'string' ? input.phone : undefined,
+        email: typeof input.email === 'string' ? input.email : undefined,
+        addressLine: typeof input.addressLine === 'string' ? input.addressLine : undefined,
+        city: typeof input.city === 'string' ? input.city : undefined,
+        state: typeof input.state === 'string' ? input.state : undefined,
+        postalCode: typeof input.postalCode === 'string' ? input.postalCode : undefined,
+      });
+      // Field names, not values: the model just sent those values, and echoing
+      // them only keeps PHI in the transcript longer.
+      return { result: r.summary, refresh: true, detail: r.summary };
+    }
+    case 'update_coverage': {
+      const r = await updateCoverage({
+        patientId: typeof input.patientId === 'string' ? input.patientId : undefined,
+        patientName: typeof input.patientName === 'string' ? input.patientName : undefined,
+        payer: typeof input.payer === 'string' ? input.payer : undefined,
+        memberId: typeof input.memberId === 'string' ? input.memberId : undefined,
+        groupNumber: typeof input.groupNumber === 'string' ? input.groupNumber : undefined,
+        status: typeof input.status === 'string' ? input.status : undefined,
+      });
+      return { result: r.summary, refresh: true, detail: r.summary };
+    }
+    case 'record_vitals': {
+      const num = (v: unknown) => (typeof v === 'number' ? v : undefined);
+      // Vitals come back in full: they are clinical facts, not identifiers, and
+      // the user needs to hear them confirmed.
+      const r = await recordVitals({
+        patientId: typeof input.patientId === 'string' ? input.patientId : undefined,
+        patientName: typeof input.patientName === 'string' ? input.patientName : undefined,
+        vitals: {
+          heightIn: num(input.heightIn),
+          heightCm: num(input.heightCm),
+          weightLb: num(input.weightLb),
+          weightKg: num(input.weightKg),
+          systolic: num(input.systolic),
+          diastolic: num(input.diastolic),
+          heartRate: num(input.heartRate),
+        },
+      });
+      return { result: r.summary, refresh: true, detail: r.summary };
+    }
+    case 'add_clinical_note': {
+      const r = await addClinicalNote({
+        patientId: typeof input.patientId === 'string' ? input.patientId : undefined,
+        patientName: typeof input.patientName === 'string' ? input.patientName : undefined,
+        note: String(input.note),
+        category: typeof input.category === 'string' ? input.category : undefined,
+      });
+      return { result: r.summary, refresh: true, detail: r.summary };
+    }
+    case 'regenerate_overview': {
+      const store = await getStore();
+      const patient = await requirePatient(store, {
+        patientId: typeof input.patientId === 'string' ? input.patientId : undefined,
+        patientName: typeof input.patientName === 'string' ? input.patientName : undefined,
+      });
+      const overview = await regeneratePatientOverview(patient.id!, store);
+      if (!overview) throw new Error('That overview could not be rewritten.');
+      return {
+        result: JSON.stringify({ text: overview.text, engine: overview.engine }),
+        refresh: true,
+        detail: `overview rewritten (${overview.engine})`,
+      };
+    }
     default:
       return { result: `Unknown tool ${name}`, refresh: false, detail: 'unknown tool' };
   }
@@ -431,11 +730,35 @@ async function executeTool(
  * the note to append to their turn — empty when the read failed, so the agent
  * loop proceeds knowing nothing rather than guessing at the card.
  */
+/**
+ * Who this document belongs to: the chart the user has open, else whoever the
+ * name on it matches. Unresolved is a normal outcome — nothing is filed and the
+ * model is told to ask.
+ */
+async function resolveFilingTarget(
+  openChartId: string | undefined,
+  name: string | undefined,
+): Promise<{ patientId: string; patientName: string } | null> {
+  try {
+    const store = await getStore();
+    const patient = openChartId
+      ? await store.read<Patient>('Patient', openChartId)
+      : name
+        ? await findPatientByName(store, name)
+        : undefined;
+    return patient?.id ? { patientId: patient.id, patientName: patientDisplayName(patient) } : null;
+  } catch (err) {
+    console.warn('[chat] could not resolve a chart for the attachment:', err);
+    return null;
+  }
+}
+
 async function readAttachment(
   client: Anthropic | null,
   model: string,
   image: AttachedImage,
   emit: Emit,
+  openChartId?: string,
 ): Promise<string> {
   const step = { type: 'tool', id: 'doc', name: 'read_document', summary: 'redact attached document' };
   emit({ ...step, status: 'running' });
@@ -446,6 +769,9 @@ async function readAttachment(
   }
   try {
     const reading = await readPatientDocument(client, model, image);
+    // The browser holds the only redacted render, so it does the filing; this
+    // just tells it which chart the copy belongs on.
+    const filing = await resolveFilingTarget(openChartId, reading.fields.name);
     emit({
       type: 'pipeline',
       toolId: 'doc',
@@ -455,10 +781,14 @@ async function readAttachment(
         boxes: reading.boxes,
         documentType: reading.documentType,
         fields: describeForPanel(reading.fields),
+        filing,
       },
     });
     emit({ ...step, status: 'done', detail: `${reading.documentType} · ${reading.boxes.length} region(s) boxed` });
-    return describeForAgent(reading);
+    const filedNote = filing
+      ? ` Filed to ${filing.patientName}'s chart.`
+      : ' Not filed to any chart — no patient matched, so ask who it is for.';
+    return `${describeForAgent(reading)}${filedNote}`;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.warn('[chat] document redaction pass failed:', err);
@@ -488,8 +818,14 @@ async function agentLoop(client: Anthropic, history: ChatMessage[], model: strin
       return;
     }
 
+    const narrating = response.stop_reason === 'tool_use';
     for (const block of response.content) {
-      if (block.type === 'text' && block.text.trim()) emit({ type: 'text', text: block.text });
+      // Text alongside a tool call is the model narrating what it is about to
+      // do; the panel shows that as a thinking step, not as the answer. Only
+      // the last turn's text is the answer, and only that gets spoken.
+      if (block.type === 'text' && block.text.trim()) {
+        emit({ type: narrating ? 'thought' : 'text', text: block.text });
+      }
     }
 
     if (response.stop_reason !== 'tool_use') return;
@@ -507,7 +843,7 @@ async function agentLoop(client: Anthropic, history: ChatMessage[], model: strin
       emit({ type: 'tool', id, name: block.name, summary, status: 'running' });
       try {
         const onPipelineStep =
-          block.name === 'run_agent' || block.name === 'complete_visit' || block.name === 'order_scan' || block.name === 'approve_draft'
+          STREAMS_TRACE.has(block.name)
             ? (pe: PipelineStepEvent) => emit({ type: 'pipeline', toolId: id, step: pe.step, detail: pe.detail, data: pe.data })
             : undefined;
         const { result, refresh, detail } = await executeTool(block.name, input, onPipelineStep);
@@ -840,7 +1176,7 @@ export async function POST(req: NextRequest): Promise<Response> {
       try {
         const client = getLlmClient();
         if (attachment) {
-          const note = await readAttachment(client, model, attachment, emit);
+          const note = await readAttachment(client, model, attachment, emit, isPatient ? undefined : patientId);
           const last = history[history.length - 1];
           if (note && last) last.content = `${last.content}\n\n${note}`.trim();
         }

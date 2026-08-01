@@ -1,22 +1,19 @@
 import 'server-only';
 import type { Task } from '@medplum/fhirtypes';
-import type { Redacted } from '@/types/redacted';
-import { unknownTokens } from './deredact';
 import type { IntentConfig, IntentContext } from './intents/shared';
 import { getStore, writeAudit } from './medplum.server';
 import { writeEpisodic } from './memory/episodic';
 import type { PipelineResult, PipelineStepEvent } from './pipeline';
 import type { ReasonOutput } from './reason';
-import { releaseRun } from './redact';
 import type { RetrievedSource } from './retrieve';
 
 /**
  * The human-approval layer for gated drafts (denial appeals). The pipeline
  * pauses after `reason` and parks the resumable run here; a staff member
  * approves (optionally with an edited letter) or rejects via copilot tools.
- * Pending state and the surrogate map are in-memory: a server restart loses
- * unapproved drafts (their 'requested' Tasks survive as tombstones on the
- * board) — an accepted single-process demo trade-off.
+ * Pending state is in-memory: a server restart loses unapproved drafts (their
+ * 'requested' Tasks survive as tombstones on the board) — an accepted
+ * single-process demo trade-off.
  */
 
 export interface PendingApproval {
@@ -28,12 +25,11 @@ export interface PendingApproval {
   ctx: IntentContext;
   reasoned: ReasonOutput;
   sources: RetrievedSource[];
-  contextText: Redacted;
-  replacements: number;
+  contextText: string;
   createdAt: string;
 }
 
-/** PHI-free view for the chat layer — never expose ctx (it holds raw PHI). */
+/** Summary view for the chat layer — never expose ctx, which holds the whole case. */
 export interface PendingApprovalSummary {
   runId: string;
   denialCode?: string;
@@ -75,7 +71,7 @@ function resolveEntry(runId?: string): PendingApproval | undefined {
   return [...pending.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
 }
 
-/** Approve the pending draft: de-redact, dispatch, complete the Task, learn. */
+/** Approve the pending draft: dispatch, complete the Task, learn. */
 export async function approveDraft(
   opts: { runId?: string; editedLetter?: string },
   onStep?: (event: PipelineStepEvent) => void,
@@ -86,14 +82,6 @@ export async function approveDraft(
       summary:
         'Nothing is awaiting approval. If the board shows a draft in Needs Review, it was lost to a server restart — reject it there or re-fire the denial.',
     };
-  }
-  // Validate an edited letter BEFORE consuming the entry so a typo'd token
-  // does not burn the draft — the reviewer can just retry.
-  if (opts.editedLetter) {
-    const bad = unknownTokens(entry.runId, opts.editedLetter);
-    if (bad.length > 0) {
-      return { summary: `Edit rejected: unknown redaction token(s) ${bad.join(', ')} — keep tokens exactly as shown in the draft.` };
-    }
   }
   // Synchronous delete before any await = the double-approve guard.
   pending.delete(entry.runId);
@@ -115,7 +103,7 @@ export async function approveDraft(
   return { summary, result };
 }
 
-/** Reject the pending draft: cancel its Task, record the outcome, drop PHI. */
+/** Reject the pending draft: cancel its Task and record the outcome. */
 export async function rejectDraft(opts: { runId?: string; reason?: string }): Promise<{ summary: string }> {
   const entry = resolveEntry(opts.runId);
   if (!entry) return { summary: 'Nothing is awaiting approval — there is no draft to reject.' };
@@ -144,7 +132,7 @@ export async function rejectDraft(opts: { runId?: string; reason?: string }): Pr
     claimRef: entry.ctx.claimRef,
     denialCode: entry.ctx.denialCode,
     denialLabel: entry.ctx.denialLabel,
-    inputSummary: (entry.contextText as string).slice(0, 400),
+    inputSummary: entry.contextText.slice(0, 400),
     retrievedSourceIds: entry.sources.map((s) => s.id),
     decision: entry.reasoned.decision,
     rationale: opts.reason ?? 'rejected by reviewer',
@@ -153,10 +141,9 @@ export async function rejectDraft(opts: { runId?: string; reason?: string }): Pr
     actionsTaken: [],
     engine: entry.reasoned.engine,
     outcome: 'rejected',
-    redactionCount: entry.replacements,
+    redactionCount: 0,
     latencyMs: Date.now() - entry.t0,
     createdAt: new Date().toISOString(),
   });
-  releaseRun(entry.runId);
   return { summary: `Draft rejected — nothing was sent to the payer. The claim can be re-fired for a fresh draft.` };
 }

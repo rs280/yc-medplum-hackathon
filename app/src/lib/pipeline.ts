@@ -1,10 +1,8 @@
 import 'server-only';
 import { randomUUID } from 'node:crypto';
 import type { ClaimResponse, Communication, Resource, Task } from '@medplum/fhirtypes';
-import type { Redacted } from '@/types/redacted';
 import { act } from './act';
 import { addPending } from './approvals.server';
-import { DeredactError, deredact } from './deredact';
 import { parseIntent } from './intents';
 import type { IntentConfig, IntentContext } from './intents/shared';
 import { getStore, writeAudit, type FhirStore } from './medplum.server';
@@ -12,20 +10,17 @@ import { applyOutcomeFeedback, markPriorAppealLost } from './memory/feedback';
 import { writeEpisodic, type EpisodicRecord } from './memory/episodic';
 import { hydrateLearnedPlaybooks, registerAttempt } from './memory/playbook';
 import { reason, type ReasonOutput } from './reason';
-import { releaseRun, startRedaction } from './redact';
 import { retrieve, type RetrievedSource } from './retrieve';
 
 /**
  * THE shared pipeline. One code path for all four agents; branching happens
- * only in parse-intent (step 1) and act (step 6 dispatch).
+ * only in parse-intent (step 1) and act (step 4 dispatch).
  *
  *   1. parse intent      FHIR event → intent config
- *   2. redact PHI        deterministic tokens + per-run surrogate map
- *   3. retrieve          Moss (all intents) + PubMed (denial-appeal only)
- *   4. reason            LLM on redacted context, citation-validated JSON
- *   5. de-redact         re-inject PHI server-side (fail closed)
- *   6. write outcome     Task + Communication + AuditEvent, dispatch via Stedi
- *   7. learn             episodic record + playbook aggregate + Moss re-index
+ *   2. retrieve          Moss (all intents) + PubMed (denial-appeal only)
+ *   3. reason            tool-using agent, citation-validated JSON
+ *   4. write outcome     Task + Communication + AuditEvent, dispatch via Stedi
+ *   5. learn             episodic record + playbook aggregate + Moss re-index
  */
 
 export interface PipelineResult {
@@ -39,8 +34,8 @@ export interface PipelineResult {
 /**
  * Live progress events emitted as the pipeline actually runs, for surfaces
  * (the copilot, the dashboard) that want to show the work happening rather
- * than just the final result. `data` is always PHI-free: redacted content,
- * ids, counts — never the de-redacted artifact.
+ * than just the final result. These feed internal views only — the artifact
+ * and context they carry are the real thing, patient detail included.
  */
 export interface PipelineStepEvent {
   step: string;
@@ -94,38 +89,44 @@ export async function runPipeline(
   try {
     const ctx = await intent.buildContext(resource, store);
 
-    // 2 ── redact PHI (nothing outbound may contain raw PHI)
-    const session = startRedaction(runId, ctx.phiResources);
-    const contextText = session.redact(ctx.contextTextRaw);
-    const criteriaQuery = session.redact(ctx.queryRaw);
-    const playbookQuery = session.redact(`${ctx.denialCode ?? ''} ${ctx.queryRaw}`.trim());
-    const pubmedTerm = ctx.pubmedTermRaw ? session.redact(ctx.pubmedTermRaw) : undefined;
-    step('redact', `— ${session.replacements} PHI value(s) tokenized`, {
-      redactionCount: session.replacements,
-      contextRedacted: (contextText as string).slice(0, 2000),
-    });
+    const contextText = ctx.contextTextRaw;
 
-    // 3 ── retrieve (Moss for all; PubMed for denial-appeal only)
+    // 2 ── retrieve (Moss for all; PubMed for denial-appeal only)
     await hydrateLearnedPlaybooks(store);
-    const sources = await retrieve(intent, { criteriaQuery, playbookQuery, pubmedTerm });
+    const sources = await retrieve(intent, {
+      criteriaQuery: ctx.queryRaw,
+      playbookQuery: `${ctx.denialCode ?? ''} ${ctx.queryRaw}`.trim(),
+      pubmedTerm: ctx.pubmedTermRaw,
+    });
     step('retrieve', `— ${sources.length} source(s)`, {
       sources: sources.map((s) => ({ id: s.id, kind: s.kind, title: s.title, snippet: s.text.slice(0, 220) })),
     });
 
-    // 4 ── reason + act plan (redacted context only; citations validated)
-    const reasoned = await reason(intent, contextText, sources, ctx.meta);
+    // 3 ── reason: the agent works the case with tools, then writes the artifact.
+    // Handles, not values, are what let it read and search on its own.
+    const refs: Record<string, string> = {
+      trigger: triggerRef,
+      ...(ctx.patientRef ? { patient: ctx.patientRef } : {}),
+      ...(ctx.claimRef ? { claim: ctx.claimRef } : {}),
+      ...(ctx.overdueSrs?.length
+        ? { overdueScreenings: ctx.overdueSrs.map((sr) => `ServiceRequest/${sr.id}`).join(', ') }
+        : {}),
+    };
+    const reasoned = await reason(intent, contextText, sources, ctx.meta, { store, refs, onStep });
     step('reason', `— ${reasoned.engine}: ${reasoned.decision}`, {
       engine: reasoned.engine,
       decision: reasoned.decision,
       rationale: reasoned.rationale,
       keyArguments: reasoned.keyArguments,
       citations: reasoned.citations,
+      toolCalls: reasoned.toolCalls,
       letterRedacted: reasoned.letter,
     });
 
     // Human-in-the-loop gate: appeal letters wait for staff sign-off before
-    // anything is de-redacted or transmitted. The surrogate map is deliberately
-    // kept alive (no releaseRun) so approval can de-redact later by runId.
+    // anything is transmitted. The draft is held whole, patient detail included
+    // — the agent reads the record through its tools, so there is no redacted
+    // rendering of it to hold instead.
     if (intent.name === 'denial-appeal') {
       const task = await store.create<Task>({
         resourceType: 'Task',
@@ -148,7 +149,6 @@ export async function runPipeline(
         reasoned,
         sources,
         contextText,
-        replacements: session.replacements,
         createdAt: new Date().toISOString(),
       });
       step('awaiting-approval', '— appeal draft ready for your review', {
@@ -168,7 +168,7 @@ export async function runPipeline(
       };
     }
 
-    // 5-7 ── de-redact, act, write outcome, learn (shared with the approval resume path)
+    // 4-5 ── act, write outcome, learn (shared with the approval resume path)
     return await finalizeRun({
       store,
       runId,
@@ -179,11 +179,9 @@ export async function runPipeline(
       reasoned,
       sources,
       contextText,
-      replacements: session.replacements,
       step,
     });
   } catch (err) {
-    releaseRun(runId);
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[pipeline ${runId.slice(0, 8)}] error:`, err);
     await writeAudit(store, {
@@ -206,20 +204,19 @@ export interface FinalizeInput {
   ctx: IntentContext;
   reasoned: ReasonOutput;
   sources: RetrievedSource[];
-  contextText: Redacted;
-  replacements: number;
+  contextText: string;
   /** The 'requested' approval Task to complete/fail in place of creating a fresh one. */
   existingTask?: Task;
   step: (name: string, extra?: string, data?: Record<string, unknown>) => void;
 }
 
 /**
- * Steps 5-7: de-redact (fail closed) → act → Task/Communication/audit → learn.
- * Called inline by runPipeline for autonomous intents, and by the approvals
- * module when a human approves a gated draft. Always releases the run.
+ * Steps 4-5: act → Task/Communication/audit → learn. Called inline by
+ * runPipeline for autonomous intents, and by the approvals module when a human
+ * approves a gated draft.
  */
 export async function finalizeRun(input: FinalizeInput): Promise<PipelineResult> {
-  const { store, runId, t0, triggerRef, intent, ctx, reasoned, sources, contextText, replacements, existingTask, step } = input;
+  const { store, runId, t0, triggerRef, intent, ctx, reasoned, contextText, existingTask, step } = input;
 
   // Complete the pending approval Task on resume; create a fresh Task otherwise.
   const writeTask = (fields: Partial<Task> & Pick<Task, 'status'>): Promise<Task> =>
@@ -235,56 +232,9 @@ export async function finalizeRun(input: FinalizeInput): Promise<PipelineResult>
           ...fields,
         });
 
-  // 5 ── de-redact final artifact server-side (fail closed)
-  let finalArtifact = '';
-  try {
-    finalArtifact = reasoned.letter ? deredact(runId, reasoned.letter) : '';
-  } catch (err) {
-    if (err instanceof DeredactError) {
-      step('de-redact FAILED CLOSED', `— ${err.message}`);
-      await writeTask({
-        status: 'failed',
-        description: `${intent.label}: rejected fail-closed (unresolved redaction tokens)`,
-        note: [{ text: err.message }],
-      });
-      await writeAudit(store, {
-        subtype: intent.name,
-        description: `Artifact rejected fail-closed: ${err.message}`,
-        outcome: '8',
-        entities: [triggerRef],
-      });
-      await writeEpisodic(store, {
-        runId,
-        intent: intent.name,
-        triggerRef,
-        claimRef: ctx.claimRef,
-        denialCode: ctx.denialCode,
-        denialLabel: ctx.denialLabel,
-        inputSummary: (contextText as string).slice(0, 400),
-        retrievedSourceIds: sources.map((s) => s.id),
-        decision: 'failed',
-        rationale: err.message,
-        keyArguments: [],
-        pmids: [],
-        actionsTaken: [],
-        engine: reasoned.engine,
-        outcome: 'failed',
-        redactionCount: replacements,
-        latencyMs: Date.now() - t0,
-        createdAt: new Date().toISOString(),
-      });
-      releaseRun(runId);
-      return { status: 'failed', runId, intent: intent.name, detail: err.message };
-    }
-    throw err;
-  }
-  // De-redacted `finalArtifact` carries real PHI from here on — it is used
-  // only for the act() dispatch below and never appears in a step event.
-  step('de-redact', '— PHI re-injected server-side (for dispatch only — never surfaced)', {
-    artifactLength: finalArtifact.length,
-  });
+  const finalArtifact = reasoned.letter;
 
-  // 6 ── act (Stedi is the only permitted PHI receiver) + write outcome
+  // 4 ── act (dispatch) + write outcome
   const actions = await act(store, intent, ctx, reasoned, finalArtifact);
   step('act', `— ${actions.map((a) => a.action).join(', ') || 'no dispatch'}`, {
     actions: actions.map((a) => ({ action: a.action, detail: a.detail, simulated: a.simulated ?? false })),
@@ -306,7 +256,7 @@ export async function finalizeRun(input: FinalizeInput): Promise<PipelineResult>
     note: [
       { text: reasoned.rationale },
       { text: `Actions: ${actions.map((a) => `${a.action}${a.simulated ? ' (simulated)' : ''} — ${a.detail}`).join(' | ')}` },
-      { text: `Citations: ${reasoned.citations.join(', ') || 'none'} · PHI tokens redacted: ${replacements}` },
+      { text: `Citations: ${reasoned.citations.join(', ') || 'none'} · Agent tool calls: ${reasoned.toolCalls}` },
     ],
     output: [
       {
@@ -318,11 +268,11 @@ export async function finalizeRun(input: FinalizeInput): Promise<PipelineResult>
 
   await writeAudit(store, {
     subtype: intent.name,
-    description: `${intent.label} completed: ${reasoned.decision} (${actions.length} action(s), ${reasoned.citations.length} citation(s), ${replacements} PHI tokens redacted)`,
+    description: `${intent.label} completed: ${reasoned.decision} (${actions.length} action(s), ${reasoned.citations.length} citation(s), ${reasoned.toolCalls} agent tool call(s))`,
     entities: [triggerRef, `Task/${task.id}`, `Communication/${communication.id}`],
   });
 
-  // 7 ── learn
+  // 5 ── learn
   const gapsClosed = actions.filter((a) => a.action === 'care-gap-closed').length;
   const record: EpisodicRecord = {
     runId,
@@ -331,8 +281,8 @@ export async function finalizeRun(input: FinalizeInput): Promise<PipelineResult>
     claimRef: ctx.claimRef,
     denialCode: ctx.denialCode,
     denialLabel: ctx.denialLabel,
-    inputSummary: (contextText as string).slice(0, 400),
-    retrievedSourceIds: sources.map((s) => s.id),
+    inputSummary: contextText.slice(0, 400),
+    retrievedSourceIds: reasoned.sources.map((s) => s.id),
     decision: reasoned.decision,
     rationale: reasoned.rationale,
     letterRedacted: reasoned.letter || undefined,
@@ -342,7 +292,7 @@ export async function finalizeRun(input: FinalizeInput): Promise<PipelineResult>
     gapsClosed: gapsClosed || undefined,
     engine: reasoned.engine,
     outcome: intent.name === 'denial-appeal' ? 'pending' : 'closed',
-    redactionCount: replacements,
+    redactionCount: 0,
     latencyMs: Date.now() - t0,
     createdAt: new Date().toISOString(),
   };
@@ -355,6 +305,5 @@ export async function finalizeRun(input: FinalizeInput): Promise<PipelineResult>
     gapsClosed: record.gapsClosed ?? 0,
   });
 
-  releaseRun(runId);
   return { status: 'completed', runId, intent: intent.name, taskId: task.id, detail: reasoned.decision };
 }

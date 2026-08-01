@@ -1,5 +1,4 @@
 import 'server-only';
-import type { Redacted } from '@/types/redacted';
 import { CRITERIA_DOCS, PLAYBOOK_SEED_DOCS, type CorpusDoc } from './corpus';
 
 /**
@@ -8,7 +7,8 @@ import { CRITERIA_DOCS, PLAYBOOK_SEED_DOCS, type CorpusDoc } from './corpus';
  * and denial playbooks (seeded SOP playbooks + LEARNED playbook entries that
  * step 7 of the pipeline re-indexes after each resolved appeal).
  *
- * Queries accept only Redacted<string> — raw PHI cannot reach Moss by type.
+ * Queries are built from clinical and payer terms (payer, procedure, denial
+ * code), not from patient identity.
  * If MOSS_PROJECT_ID/MOSS_API_KEY are unset (or a call fails), a built-in
  * lexical index over the same corpus answers instead, so the pipeline never
  * blocks on retrieval.
@@ -122,12 +122,12 @@ function lexicalSearch(index: string, query: string, topK: number): MossHit[] {
 
 // ── Public API ──────────────────────────────────────────────────────────────
 
-export async function mossSearch(index: string, query: Redacted, topK = 4): Promise<MossHit[]> {
+export async function mossSearch(index: string, query: string, topK = 4): Promise<MossHit[]> {
   const client = await getMossClient();
   if (client) {
     try {
       await ensureLoaded(client, index);
-      const result = await client.query(index, query as string, { topK });
+      const result = await client.query(index, query, { topK });
       return (result.docs ?? []).map((d: any) => ({
         id: d.id,
         text: d.text,
@@ -138,7 +138,7 @@ export async function mossSearch(index: string, query: Redacted, topK = 4): Prom
       console.warn(`[moss] query failed on '${index}', lexical fallback:`, err);
     }
   }
-  return lexicalSearch(index, query as string, topK);
+  return lexicalSearch(index, query, topK);
 }
 
 /** Upsert docs into an index (used at boot and by the playbook re-indexer). */

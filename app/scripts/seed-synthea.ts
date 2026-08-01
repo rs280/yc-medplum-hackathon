@@ -11,8 +11,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { Claim, Coverage, Encounter, Patient, Resource } from '@medplum/fhirtypes';
 import { getStore, type FhirStore } from '@/lib/medplum.server';
+import { recordVitals } from '@/lib/vitals.server';
 
 const IDS = 'https://autonomous-backoffice.dev/synthea';
+/** Fixed so re-seeding is a genuine no-op, not a restamp. */
+const SEED_VITALS_AT = '2026-07-28T17:00:00.000Z';
 
 interface SeedClaim {
   id6: string;
@@ -27,6 +30,14 @@ interface SeedEncounter {
   start?: string;
   end?: string;
 }
+/** Hand-authored plausible values — Synthea's Observation stream was not distilled. */
+interface SeedVitals {
+  heightCm: number;
+  weightKg: number;
+  systolic: number;
+  diastolic: number;
+  heartRate: number;
+}
 interface SeedPatient {
   syntheaId: string;
   mrn: string;
@@ -39,6 +50,7 @@ interface SeedPatient {
   payer: string;
   encounters: SeedEncounter[];
   claims: SeedClaim[];
+  vitals?: SeedVitals;
 }
 
 function payerName(raw: string): string {
@@ -91,6 +103,18 @@ async function main(): Promise<void> {
         },
         `SYN-COV-${s.syntheaId.slice(0, 6)}`,
       );
+    }
+
+    if (s.vitals) {
+      // Fixed observedAt so re-seeding restamps nothing — a moving timestamp
+      // would mark every chart's overview stale on each run.
+      await recordVitals({
+        patientId: patient.id,
+        vitals: { ...s.vitals, observedAt: SEED_VITALS_AT },
+        identifierPrefix: `SYN-VITAL-${s.mrn}`,
+        store,
+      });
+      console.log(`+ Observation vitals ${s.mrn}`);
     }
 
     // Synthea's deterministic ids share prefixes within a patient, so add an

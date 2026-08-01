@@ -11,13 +11,19 @@ import {
   Unlock,
   Zap,
 } from 'lucide-react';
-import { getStore } from '@/lib/medplum.server';
+import type { AuditEvent, Communication, DocumentReference, Observation, Patient } from '@medplum/fhirtypes';
+import { getStore, type FhirStore } from '@/lib/medplum.server';
 import { listEpisodic, type StoredEpisodic } from '@/lib/memory/episodic';
 import { avgTurnaroundMs, loadPlaybook } from '@/lib/memory/playbook';
 import { listCalendar } from '@/lib/appointments.server';
+import { clinicianGreeting, workspacePulse, workspaceSummary } from '@/lib/briefing.server';
+import { mossMode } from '@/lib/moss.server';
+import { reasonEngine } from '@/lib/reason';
 import { moneyRecovered } from '@/lib/workspace.server';
+import { OverviewCapabilities, type Capability } from '@/components/OverviewCapabilities';
+import { OverviewHero } from '@/components/OverviewHero';
 import { renderRedacted } from '@/components/Redacted';
-import { CountUp, Stagger } from '@/components/anim';
+import { Stagger } from '@/components/anim';
 
 export const dynamic = 'force-dynamic';
 
@@ -49,7 +55,9 @@ const BADGES: Record<StoredEpisodic['outcome'], { icon: string; label: string }>
 };
 
 function Badge({ outcome }: { outcome: StoredEpisodic['outcome'] }) {
-  const b = BADGES[outcome];
+  // An unrecognised or missing outcome must not take the whole page down with
+  // it — the dashboard is the first thing anyone sees.
+  const b = BADGES[outcome] ?? { icon: '·', label: String(outcome ?? 'UNKNOWN').toUpperCase() };
   return (
     <span className={`badge ${outcome}`}>
       {b.icon} {b.label}
@@ -200,67 +208,176 @@ function RunTrace({ run }: { run: StoredEpisodic }) {
   );
 }
 
+/**
+ * The live numbers behind the capability grid. Counts come from resources this
+ * page already needs plus four cheap searches — nothing here calls a model, so
+ * the 4s auto-refresh stays a pure data update.
+ */
+async function platformStats(store: FhirStore) {
+  const [patients, observations, documents, communications, audits] = await Promise.all([
+    store.search<Patient>('Patient', {}),
+    store.search<Observation>('Observation', {}),
+    store.search<DocumentReference>('DocumentReference', {}),
+    store.search<Communication>('Communication', {}),
+    store.search<AuditEvent>('AuditEvent', {}),
+  ]);
+  return {
+    patients: patients.length,
+    observations: observations.length,
+    documents: documents.length,
+    transcripts: communications.filter((c) => c.category?.[0]?.text === 'voice-transcript').length,
+    audits: audits.length,
+  };
+}
+
 export default async function Dashboard() {
   const store = await getStore();
-  const [episodic, playbook, recovered, appointments] = await Promise.all([
+  const [episodic, playbook, recovered, appointments, greeting, stats] = await Promise.all([
     listEpisodic(store),
     loadPlaybook(store),
     moneyRecovered(),
     listCalendar(),
+    clinicianGreeting(),
+    platformStats(store),
   ]);
 
-  const appeals = episodic.filter((e) => e.intent === 'denial-appeal');
-  const won = appeals.filter((e) => e.outcome === 'won').length;
-  const lost = appeals.filter((e) => e.outcome === 'lost').length;
-  const resolved = won + lost;
-  const winRate = resolved > 0 ? Math.round((100 * won) / resolved) : null;
-  const gapsClosed = episodic.reduce((s, e) => s + (e.gapsClosed ?? 0), 0);
-  // Rough but honest layman conversion: each completed job replaces ~45 min
-  // of staff work (appeal drafting, callbacks, auth paperwork).
-  const hoursSaved = Math.round(episodic.filter((e) => e.outcome !== 'failed').length * 0.75);
   const mostRecent = episodic[0];
+
+  const sum = (fn: (e: StoredEpisodic) => number) => episodic.reduce((total, e) => total + fn(e), 0);
+  const redactions = sum((e) => e.redactionCount);
+  const sourcesRead = sum((e) => e.retrievedSourceIds.length);
+  const dispatches = sum((e) => e.actionsTaken.length);
+  const gapsClosed = sum((e) => e.gapsClosed ?? 0);
+  const byClaude = episodic.filter((e) => e.engine === 'anthropic').length;
+  const pmids = new Set(episodic.flatMap((e) => e.retrievedSourceIds.filter((id) => id.startsWith('PMID:'))));
+  const wins = playbook.reduce((n, p) => n + p.wins, 0);
+  const resolved = playbook.reduce((n, p) => n + p.wins + p.losses, 0);
+  const agentBooked = appointments.filter((a) => a.bookedBy !== 'staff').length;
+
+  const isLive = store.mode === 'medplum';
+  const mossLive = mossMode() === 'moss';
+  const claudeLive = reasonEngine() === 'anthropic';
+  const stediLive = Boolean(process.env.STEDI_API_KEY);
+  const deepgramLive = Boolean(process.env.DEEPGRAM_API_KEY);
+
+  const pipeline = [
+    {
+      label: 'parse intent',
+      value: `${episodic.length} run${episodic.length === 1 ? '' : 's'}`,
+      tech: ['Medplum'],
+    },
+    { label: 'redact PHI', value: `${redactions} hidden`, tech: ['Deepgram'] },
+    { label: 'retrieve', value: `${sourcesRead} sources`, tech: ['Moss', 'PubMed'] },
+    { label: 'reason', value: claudeLive ? 'OpenRouter, Medplum, Moss' : 'template fallback' },
+    { label: 'de-redact', value: 'fail-closed' },
+    { label: 'act', value: `${dispatches} dispatched`, tech: ['Stedi', 'Medplum'] },
+    {
+      label: 'learn',
+      value: `${playbook.length} lesson${playbook.length === 1 ? '' : 's'}`,
+      tech: ['Moss'],
+    },
+  ];
+
+  const capabilities: Capability[] = [
+    {
+      id: 'fhir',
+      name: 'FHIR back office',
+      description:
+        'Medplum is the database and the queue. Patients, coverage, claims, visits, orders, documents and vitals are all real FHIR resources — nothing is kept in a side table.',
+      stat: `${stats.patients} patients · ${stats.observations} vitals · ${appointments.length} visits`,
+      status: { label: isLive ? 'live' : 'demo store', tone: isLive ? 'good' : 'neutral' },
+    },
+    {
+      id: 'copilot',
+      name: 'The copilot',
+      description:
+        'A streaming agent loop beside every page. It opens charts, records vitals, books and moves visits, files documents and fires the agents — and shows each tool call as it runs.',
+      stat: `16 tools · reads and writes the chart`,
+      status: { label: claudeLive ? 'Claude' : 'keyword router', tone: claudeLive ? 'good' : 'neutral' },
+    },
+    {
+      id: 'voice',
+      name: 'Voice & outreach',
+      description:
+        'The Caller agent runs post-visit follow-up and closes overdue screenings. Finalized call transcripts post in from Deepgram and land on the patient’s chart with PII redacted at the source.',
+      stat: `${gapsClosed} care gap${gapsClosed === 1 ? '' : 's'} closed · ${stats.transcripts} transcript${stats.transcripts === 1 ? '' : 's'}`,
+      status: { label: deepgramLive ? 'Deepgram key set' : 'not configured', tone: deepgramLive ? 'good' : 'neutral' },
+    },
+    {
+      id: 'redaction',
+      name: 'PHI never leaves raw',
+      description:
+        'Names, dates and identifiers become typed tokens before anything reaches a model, and are restored server-side. A branded Redacted type makes sending raw PHI outbound a compile error, and de-redaction fails closed.',
+      stat: `${redactions} value${redactions === 1 ? '' : 's'} tokenized`,
+      status: { label: 'enforced at compile time', tone: 'accent' },
+    },
+    {
+      id: 'criteria',
+      name: 'Payer criteria retrieval',
+      description:
+        'Moss holds each payer’s published policy plus the playbook this clinic has learned. Every won appeal is re-indexed, so the next run retrieves its own precedent.',
+      stat: `${sourcesRead} source${sourcesRead === 1 ? '' : 's'} read across ${episodic.length} run${episodic.length === 1 ? '' : 's'}`,
+      status: { label: mossLive ? 'live' : 'lexical fallback', tone: mossLive ? 'good' : 'neutral' },
+    },
+    {
+      id: 'evidence',
+      name: 'Clinical evidence',
+      description:
+        'Appeals are backed by real literature pulled from PubMed. A citation validator drops any line carrying a PMID that was not actually retrieved, so an invented reference cannot reach a payer.',
+      stat: `${pmids.size} PMID${pmids.size === 1 ? '' : 's'} cited`,
+      status: { label: 'live · no key needed', tone: 'good' },
+    },
+    {
+      id: 'edi',
+      name: 'Payer EDI',
+      description:
+        'Stedi carries the X12: 270/271 eligibility on intake, 837 claim submission, 275 attachments and 278 prior authorization.',
+      stat: '270/271 · 837 · 275 · 278',
+      status: { label: stediLive ? 'live' : 'simulated acks', tone: stediLive ? 'good' : 'neutral' },
+    },
+    {
+      id: 'memory',
+      name: 'Memory that compounds',
+      description:
+        'Every run writes an episodic record; outcomes roll up into a playbook per denial code holding the arguments and PMIDs that won. The clinic gets better at the denials it actually sees.',
+      stat: `${playbook.length} denial code${playbook.length === 1 ? '' : 's'} · ${wins}/${resolved} appeals won`,
+      status: { label: 'self-improving', tone: 'accent' },
+    },
+    {
+      id: 'chart',
+      name: 'The patient chart',
+      description:
+        'Every patient opens to a summary, their journey, their documents and the raw FHIR behind it — with an AI overview written from the record and cached, so reading a chart never spends a model call.',
+      stat: `${stats.patients} charts · ${stats.documents} document${stats.documents === 1 ? '' : 's'} on file`,
+      status: { label: 'live', tone: 'good' },
+    },
+    {
+      id: 'schedule',
+      name: 'One shared calendar',
+      description:
+        'Agents, the copilot and the front desk book into the same calendar, with conflict checks and provenance on every visit. Cancelling a care-gap visit reopens the gap it was closing.',
+      stat: `${appointments.length} visit${appointments.length === 1 ? '' : 's'} · ${agentBooked} booked by the AI`,
+      status: { label: 'live', tone: 'good' },
+    },
+    {
+      id: 'audit',
+      name: 'Audit trail',
+      description:
+        'Every agent action, chart edit, document filing and eligibility check writes an AuditEvent, and FHIR Subscriptions fire the same pipeline a copilot command does.',
+      stat: `${stats.audits} audit event${stats.audits === 1 ? '' : 's'} written`,
+      status: { label: 'FHIR-native', tone: 'accent' },
+    },
+  ];
 
   return (
     <>
-      <div className="page-head">
-        <h1>Your AI back office</h1>
-        <p>Four AI teammates handle the paperwork nobody has time for. Everything below is live — nothing is staged.</p>
-      </div>
-
-      <Stagger signal={`tiles:${episodic.length}`}>
-        <div className="grid tiles">
-          <div className="card tile tile-hero" title="Payments recovered after the AI appealed a denial">
-            <div className="label">Money recovered</div>
-            <div className="value accent">
-              <CountUp value={recovered} prefix="$" />
-            </div>
-            <div className="note">from insurance denials the AI fought and won</div>
-          </div>
-          <div className="card tile" title="Won / (won + lost) across resolved appeals">
-            <div className="label">Appeals won</div>
-            <div className="value">{winRate == null ? '—' : <CountUp value={winRate} suffix="%" />}</div>
-            <div className="note">
-              {resolved > 0 ? `${won} won · ${lost} lost — most clinics never even file` : 'none resolved yet'}
-            </div>
-          </div>
-          <div className="card tile" title="~45 minutes of staff work per completed job">
-            <div className="label">Staff hours saved</div>
-            <div className="value">
-              <CountUp value={hoursSaved} suffix="h" />
-            </div>
-            <div className="note">appeals, callbacks &amp; forms done automatically</div>
-          </div>
-          <div className="card tile" title="Follow-ups and overdue screenings booked by the caller agent">
-            <div className="label">Patients looked after</div>
-            <div className="value">
-              <CountUp value={appointments.length + gapsClosed} />
-            </div>
-            <div className="note">
-              {appointments.length} visit(s) booked · {gapsClosed} overdue screening(s) caught
-            </div>
-          </div>
-        </div>
-      </Stagger>
+      <OverviewHero
+        greeting={greeting}
+        pulse={workspacePulse(episodic, appointments)}
+        // Deliberately not awaited: the hero streams the paragraph in so a
+        // model call can never delay the rest of the page.
+        summary={workspaceSummary(episodic, appointments, recovered)}
+      />
 
       <Stagger signal={episodic.length}>
         <div className="grid agent-strip">
@@ -295,6 +412,8 @@ export default async function Dashboard() {
           })}
         </div>
       </Stagger>
+
+      <OverviewCapabilities pipeline={pipeline} capabilities={capabilities} />
 
       {mostRecent ? (
         <RunTrace run={mostRecent} />

@@ -1,5 +1,4 @@
 import 'server-only';
-import type { Redacted } from '@/types/redacted';
 
 /**
  * PubMed E-utilities — clinical evidence retrieval for the APPEAL AGENT ONLY.
@@ -67,13 +66,13 @@ function parseEfetchXml(xml: string): PubMedEvidence[] {
   return out;
 }
 
-export async function searchPubMed(term: Redacted, max = 3): Promise<PubMedEvidence[]> {
+export async function searchPubMed(term: string, max = 3): Promise<PubMedEvidence[]> {
   const key = `${term}|${max}`;
   const cached = memo.get(key);
   if (cached) return cached;
   try {
     const evidence = await throttled(async () => {
-      const searchUrl = `${EUTILS}/esearch.fcgi?db=pubmed&retmode=json&retmax=${max}&sort=relevance&term=${encodeURIComponent(term as string)}`;
+      const searchUrl = `${EUTILS}/esearch.fcgi?db=pubmed&retmode=json&retmax=${max}&sort=relevance&term=${encodeURIComponent(term)}`;
       const searchRes = await fetch(searchUrl, { signal: AbortSignal.timeout(10_000) });
       if (!searchRes.ok) throw new Error(`esearch ${searchRes.status}`);
       const searchJson = (await searchRes.json()) as { esearchresult?: { idlist?: string[] } };
@@ -86,7 +85,7 @@ export async function searchPubMed(term: Redacted, max = 3): Promise<PubMedEvide
       return parseEfetchXml(await fetchRes.text());
     });
     memo.set(key, evidence);
-    console.log(`[pubmed] "${(term as string).slice(0, 80)}" → ${evidence.map((e) => e.pmid).join(', ') || 'no results'}`);
+    console.log(`[pubmed] "${term.slice(0, 80)}" → ${evidence.map((e) => e.pmid).join(', ') || 'no results'}`);
     return evidence;
   } catch (err) {
     console.warn('[pubmed] lookup failed, continuing without clinical evidence:', err);

@@ -126,6 +126,16 @@ export async function act(
       const doc = await store.create<DocumentReference>({
         resourceType: 'DocumentReference',
         status: 'current',
+        type: { text: `Prior-auth packet: ${ctx.meta.procedure}` },
+        // Provenance the chart's Documents tab reads to tell an agent-written
+        // packet from something handed over at the front desk.
+        category: [
+          {
+            coding: [{ system: 'https://autonomous-backoffice.dev/document-source', code: 'agent-generated' }],
+            text: 'Agent generated',
+          },
+        ],
+        date: new Date().toISOString(),
         description: `Prior-auth packet: ${ctx.meta.procedure}`,
         subject: ctx.patientRef ? { reference: ctx.patientRef } : undefined,
         content: [

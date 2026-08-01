@@ -9,9 +9,10 @@ import type {
   ServiceRequest,
   Task,
 } from '@medplum/fhirtypes';
-import { getStore } from './medplum.server';
-import { formatSlot, listCalendar } from './appointments.server';
+import { getStore, type FhirStore } from './medplum.server';
+import { formatSlot, listCalendar, type CalendarAppointment } from './appointments.server';
 import { bookedByLabel } from './calendar';
+import type { TimelineEvent } from './chart';
 import { patientDisplayName } from './patients.server';
 import { isDenied, parseDenial } from './intents/shared';
 
@@ -35,32 +36,34 @@ export interface PatientSummary {
   planId?: string;
 }
 
-export interface TimelineEvent {
-  at: string;
-  kind:
-    | 'intake'
-    | 'encounter'
-    | 'order'
-    | 'claim'
-    | 'denial'
-    | 'approval'
-    | 'agent'
-    | 'appointment'
-    | 'message';
-  title: string;
-  detail?: string;
-  badge?: { label: string; tone: 'good' | 'bad' | 'neutral' | 'accent' };
+// The timeline event shape lives in chart.ts so client components can import it
+// without pulling in this `server-only` module.
+export type { TimelineEvent } from './chart';
+
+/**
+ * Every resource one patient's story is built from, fetched once. The journey
+ * and the chart's FHIR tab are two views of this bundle, not two round-trips.
+ */
+export interface PatientRecord {
+  patient: Patient;
+  encounters: Encounter[];
+  claims: Claim[];
+  responses: ClaimResponse[];
+  serviceRequests: ServiceRequest[];
+  appointments: CalendarAppointment[];
+  tasks: Task[];
+  communications: Communication[];
 }
 
 function mrnOf(p: Patient): string | undefined {
   return p.identifier?.find((i) => i.value?.startsWith('MRN'))?.value ?? p.identifier?.[0]?.value;
 }
 
-export async function listPatients(): Promise<PatientSummary[]> {
-  const store = await getStore();
+export async function listPatients(store?: FhirStore): Promise<PatientSummary[]> {
+  const db = store ?? (await getStore());
   const [patients, coverages] = await Promise.all([
-    store.search<Patient>('Patient', {}),
-    store.search<Coverage>('Coverage', {}),
+    db.search<Patient>('Patient', {}),
+    db.search<Coverage>('Coverage', {}),
   ]);
   return patients.map((p) => {
     const cov = coverages.find((c) => c.beneficiary?.reference === `Patient/${p.id}`);
@@ -76,21 +79,45 @@ export async function listPatients(): Promise<PatientSummary[]> {
   });
 }
 
-export async function patientTimeline(patientId: string): Promise<TimelineEvent[]> {
-  const store = await getStore();
+/** Fetch every resource behind one patient's story. Undefined when the id is unknown. */
+export async function patientRecord(patientId: string, store?: FhirStore): Promise<PatientRecord | undefined> {
+  const db = store ?? (await getStore());
   const ref = `Patient/${patientId}`;
-  const [patient, encounters, claims, responses, srs, appts, tasks, comms] = await Promise.all([
-    store.read<Patient>('Patient', patientId),
-    store.search<Encounter>('Encounter', { subject: ref }),
-    store.search<Claim>('Claim', { patient: ref }),
-    store.search<ClaimResponse>('ClaimResponse', { patient: ref }),
-    store.search<ServiceRequest>('ServiceRequest', { subject: ref }),
-    listCalendar({ patientId, includeCancelled: true, store }),
-    // 'for' isn't a portable search param (Medplum uses 'patient'; the memory
-    // store supports neither) — fetch all and filter here.
-    store.search<Task>('Task', {}).then((all) => all.filter((t) => t.for?.reference === ref)),
-    store.search<Communication>('Communication', { subject: ref }),
-  ]);
+  const [patient, encounters, claims, responses, serviceRequests, appointments, tasks, communications] =
+    await Promise.all([
+      db.read<Patient>('Patient', patientId),
+      db.search<Encounter>('Encounter', { subject: ref }),
+      db.search<Claim>('Claim', { patient: ref }),
+      db.search<ClaimResponse>('ClaimResponse', { patient: ref }),
+      db.search<ServiceRequest>('ServiceRequest', { subject: ref }),
+      listCalendar({ patientId, includeCancelled: true, store: db }),
+      // 'for' isn't a portable search param (Medplum uses 'patient'; the memory
+      // store supports neither) — fetch all and filter here.
+      db.search<Task>('Task', {}).then((all) => all.filter((t) => t.for?.reference === ref)),
+      db.search<Communication>('Communication', { subject: ref }),
+    ]);
+
+  if (!patient) return undefined;
+  return { patient, encounters, claims, responses, serviceRequests, appointments, tasks, communications };
+}
+
+export async function patientTimeline(patientId: string, store?: FhirStore): Promise<TimelineEvent[]> {
+  const record = await patientRecord(patientId, store);
+  return record ? timelineFrom(record) : [];
+}
+
+/** Pure: the patient's bundle rendered as journey events, newest first. */
+export function timelineFrom(record: PatientRecord): TimelineEvent[] {
+  const {
+    patient,
+    encounters,
+    claims,
+    responses,
+    serviceRequests: srs,
+    appointments: appts,
+    tasks,
+    communications: comms,
+  } = record;
 
   const events: TimelineEvent[] = [];
 

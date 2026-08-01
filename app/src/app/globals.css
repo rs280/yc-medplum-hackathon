@@ -1084,6 +1084,91 @@ tbody tr:hover {
   border-color: var(--border);
 }
 
+/* Sources disclosure under an assistant reply */
+.sources {
+  width: 92%;
+  margin-top: 4px;
+}
+.sources-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--muted);
+  background: none;
+  border: none;
+  padding: 2px 0;
+  cursor: pointer;
+}
+.sources-toggle:hover {
+  color: var(--accent-strong);
+}
+.sources-count {
+  font-weight: 700;
+  color: var(--ink-2);
+  background: var(--track);
+  border-radius: 999px;
+  padding: 0 5px;
+}
+.sources-caret {
+  transition: transform 150ms ease;
+}
+.sources-caret.open {
+  transform: rotate(180deg);
+}
+.sources-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 5px;
+  padding: 8px 10px;
+  background: var(--surface);
+  border: 1px solid var(--grid);
+  border-radius: 8px;
+  animation: trace-in 0.18s ease-out;
+}
+.sources-item {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+.sources-item a {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 3px;
+  color: var(--ink-2);
+  text-decoration: none;
+}
+.sources-item a:hover {
+  color: var(--accent-strong);
+  text-decoration: underline;
+}
+.sources-kind {
+  flex-shrink: 0;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  background: var(--track);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 4px;
+}
+.sources-kind.kind-pubmed {
+  color: var(--cite);
+  background: var(--cite-bg);
+  border-color: rgba(109, 40, 217, 0.25);
+}
+.sources-empty {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
 /* ── PHI / citation token highlighting — the visible proof of redaction ─── */
 .phi-tok {
   display: inline-block;
@@ -1242,6 +1327,11 @@ tbody tr:hover {
   border: 1px solid var(--border);
   border-radius: 5px;
   padding: 2px 6px;
+  /* PubMed article titles land in these too, so a chip has to be able to give
+     up and truncate rather than run off the edge of a narrow panel. */
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 .trace-chip.chip-pubmed {
@@ -1294,6 +1384,34 @@ tbody tr:hover {
   max-height: 220px;
   overflow-y: auto;
   color: var(--ink);
+}
+
+/* The model narrating itself, rendered inline with the tool steps */
+.thought {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink-2);
+  padding: 1px 2px;
+  animation: trace-in 0.2s ease-out;
+}
+.thought svg {
+  color: var(--accent-strong);
+  flex-shrink: 0;
+  align-self: center;
+}
+
+/* What a tool returned, under its step chip */
+.step-detail {
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--ink-2);
+  margin: 2px 0 0 10px;
+  padding-left: 10px;
+  border-left: 2px solid var(--grid);
+  word-break: break-word;
 }
 
 /* ── Copilot: live pipeline trace nested under a running/done tool step ─── */
@@ -2164,6 +2282,135 @@ tbody tr:hover {
   color: var(--good-text);
 }
 
+/* ── Overview hero: greeting + AI summary, with the live counters beside it
+   ───────────────────────────────────────────────────────────────────────── */
+.overview-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 250px;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.hero-brief {
+  display: flex;
+  flex-direction: column;
+  /* Centred so the grid's equal-height cards never leave a lopsided gap,
+     whichever side happens to be the taller one. */
+  justify-content: center;
+  gap: 8px;
+  padding: 20px 22px;
+  border-color: rgba(8, 145, 178, 0.24);
+  background: linear-gradient(150deg, var(--accent-soft), var(--surface) 58%);
+}
+.hero-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent-strong);
+}
+.hero-greeting {
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  margin: 0;
+}
+.hero-summary {
+  font-size: 14.5px;
+  line-height: 1.62;
+  color: var(--ink-2);
+  margin: 0;
+  max-width: 76ch;
+}
+.hero-engine {
+  font-size: 11px;
+  color: var(--muted);
+  font-style: italic;
+}
+
+/* Placeholder lines while the model writes — same rhythm as the paragraph. */
+.hero-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 5px 0 6px;
+  max-width: 76ch;
+}
+.hero-skeleton span {
+  height: 10px;
+  border-radius: 5px;
+  background: linear-gradient(90deg, var(--track), #dfe8ea, var(--track));
+  background-size: 220% 100%;
+  animation: hero-shimmer 1.5s ease-in-out infinite;
+}
+@keyframes hero-shimmer {
+  0% {
+    background-position: 220% 0;
+  }
+  100% {
+    background-position: -220% 0;
+  }
+}
+
+.hero-stats {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 14px;
+  padding: 16px 18px;
+}
+.hero-stat + .hero-stat {
+  border-top: 1px solid var(--grid);
+  padding-top: 14px;
+}
+.hero-stat-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.hero-stat-value {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  margin: 2px 0 1px;
+}
+.hero-stat-total {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--muted);
+  letter-spacing: 0;
+}
+.hero-stat-note {
+  font-size: 11.5px;
+  color: var(--ink-2);
+}
+@media (max-width: 900px) {
+  .overview-hero {
+    grid-template-columns: 1fr;
+  }
+  .hero-stats {
+    flex-direction: row;
+  }
+  .hero-stat {
+    flex: 1;
+  }
+  .hero-stat + .hero-stat {
+    border-top: none;
+    border-left: 1px solid var(--grid);
+    padding-top: 0;
+    padding-left: 14px;
+  }
+}
+
 /* ── Patient view: phone mockup + explainer ─────────────────────────────── */
 .patient-view {
   display: flex;
@@ -2543,6 +2790,375 @@ tbody tr:hover {
   color: var(--accent-strong);
   font-weight: 600;
   margin-top: 3px;
+}
+.roster-card:focus-visible {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 2px;
+}
+/* The card whose chart is open below. */
+.roster-card.is-selected {
+  background: var(--accent-soft);
+  border-color: rgba(8, 145, 178, 0.45);
+  box-shadow: var(--shadow-sm);
+}
+.roster-card.is-selected .roster-name {
+  color: var(--accent-strong);
+}
+
+/* ── Overview: pipeline strip + capability grid ─────────────────────────── */
+.cap-lede {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: -4px 0 14px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--ink-2);
+  max-width: 78ch;
+}
+.cap-lede svg {
+  color: var(--accent);
+  align-self: center;
+  flex-shrink: 0;
+}
+/* Seven steps, wrapping rather than scrolling — the content column is narrow
+   between the sidebar and the copilot. */
+.pipeline {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: pipeline;
+}
+.pipeline-step {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+  padding: 11px 12px;
+  background: var(--track);
+  border: 1px solid var(--border);
+  border-radius: 11px;
+}
+.pipeline-step::after {
+  counter-increment: pipeline;
+  content: counter(pipeline);
+  position: absolute;
+  top: 9px;
+  right: 11px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--baseline);
+}
+.pipeline-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 27px;
+  height: 27px;
+  border-radius: 8px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+.pipeline-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ink);
+  letter-spacing: -0.005em;
+}
+.pipeline-stat {
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.pipeline-tech {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 1px;
+}
+.pipeline-tech-chip {
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+  border-radius: 999px;
+  padding: 2px 7px;
+  white-space: nowrap;
+}
+.cap-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(268px, 1fr));
+  gap: 10px;
+}
+.cap-card {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 13px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+.cap-card:hover {
+  border-color: rgba(8, 145, 178, 0.3);
+  box-shadow: var(--shadow-sm);
+}
+.cap-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.cap-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 29px;
+  height: 29px;
+  border-radius: 9px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  flex-shrink: 0;
+}
+.cap-name {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  flex: 1;
+  min-width: 0;
+}
+.cap-desc {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+/* Sits on the baseline rule so every card's number lands in the same place. */
+.cap-stat {
+  margin-top: auto;
+  padding-top: 8px;
+  border-top: 1px solid var(--grid);
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--accent-strong);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Patients panel: head row + inline intake ───────────────────────────── */
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.panel-head h2 {
+  margin: 0;
+}
+/* Wraps onto its own full-width line under the head row. */
+.intake-form {
+  flex-basis: 100%;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 10px 12px;
+  padding: 12px;
+  background: var(--track);
+  border: 1px solid var(--border);
+  border-radius: 11px;
+}
+.intake-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.intake-field label {
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.intake-field input,
+.intake-field select {
+  font-family: var(--font);
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 7px 10px;
+  outline: none;
+  min-width: 0;
+}
+.intake-field input:focus,
+.intake-field select:focus {
+  border-color: rgba(8, 145, 178, 0.5);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.intake-foot {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+/* The one primary action on this page, so it carries the accent. */
+.intake-submit {
+  font-family: var(--font);
+  font-size: 12px;
+  font-weight: 700;
+  color: #fff;
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  padding: 6px 14px;
+  cursor: pointer;
+}
+.intake-submit:hover:not(:disabled) {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+}
+.intake-submit:disabled {
+  background: var(--track);
+  color: var(--muted);
+  border-color: var(--border);
+  cursor: default;
+}
+
+/* ── Patient chart: tabs, summary facts, documents, FHIR ────────────────── */
+.chart-tabs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 12px 0;
+}
+.chart-tab-count {
+  margin-left: 5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.chart-overview {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.65;
+  color: var(--ink-2);
+}
+.chart-overview-foot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.chart-coverage {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.chart-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px 18px;
+  margin: 0;
+}
+.chart-fact dt {
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.chart-fact dd {
+  margin: 2px 0 0;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.chart-fact-wide {
+  grid-column: 1 / -1;
+}
+.doc-upload {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--grid);
+}
+.doc-list {
+  display: flex;
+  flex-direction: column;
+}
+.doc-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 2px;
+}
+.doc-row + .doc-row {
+  border-top: 1px solid var(--grid);
+}
+.doc-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: var(--track);
+  color: var(--ink-2);
+  flex-shrink: 0;
+}
+.doc-icon.is-agent {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+.doc-body {
+  flex: 1;
+  min-width: 0;
+}
+.doc-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  text-decoration: none;
+}
+.doc-title:hover {
+  color: var(--accent-strong);
+}
+.fhir-block + .fhir-block {
+  margin-top: 8px;
+}
+.fhir-block summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 2px;
+  font-size: 12px;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.fhir-type {
+  font-weight: 700;
+  color: var(--ink);
+}
+.fhir-id {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
 }
 
 /* ── Integrations ───────────────────────────────────────────────────────── */

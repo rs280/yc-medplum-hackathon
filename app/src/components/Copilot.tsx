@@ -13,7 +13,9 @@ import {
   Hand,
   Lock,
   Mic,
+  ExternalLink,
   Paperclip,
+  Quote,
   RefreshCcw,
   Search,
   Sparkles,
@@ -27,7 +29,46 @@ import {
 import { usePathname, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { renderRedacted } from '@/components/Redacted';
-import { drawRedactedImage, loadAttachment, type ImageAttachment, type PhiBox } from '@/lib/chatImage';
+import {
+  drawRedactedImage,
+  loadAttachment,
+  shrinkForStorage,
+  type ImageAttachment,
+  type PhiBox,
+} from '@/lib/chatImage';
+
+/**
+ * File the redacted copy onto a patient's chart. Fire-and-forget: a failure
+ * here must never interrupt the turn, and the note the model already received
+ * says the document was filed, so a silent retry is not worth the complexity.
+ */
+async function fileOnChart(
+  patientId: string,
+  redactedImage: string,
+  fileName: string,
+  data: Record<string, unknown>,
+): Promise<void> {
+  try {
+    const res = await fetch('/api/patients/documents', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        action: 'file',
+        patientId,
+        base64: await shrinkForStorage(redactedImage),
+        mediaType: 'image/jpeg',
+        fileName,
+        documentType: typeof data.documentType === 'string' ? data.documentType : 'document',
+        fields: Array.isArray(data.fields) ? data.fields : [],
+        boxCount: Array.isArray(data.boxes) ? data.boxes.length : 0,
+      }),
+    });
+    if (!res.ok) throw new Error(`filing failed (${res.status})`);
+  } catch (err) {
+    console.warn('[copilot] could not file the document on the chart:', err);
+  }
+}
+import { collectCitations, type Citation, type RetrievedSource } from '@/lib/citations';
 import type { ChatModelOption } from '@/lib/models';
 
 /**
@@ -54,20 +95,31 @@ interface Step {
   trace: PipelineTrace[];
 }
 
+/** The model narrating its own reasoning, shown as a step rather than as the answer. */
+interface Thought {
+  kind: 'thought';
+  text: string;
+}
+
+/** Thoughts and tool steps share one list so they render in the order they happened. */
+type Entry = Thought | ({ kind: 'step' } & Step);
+
 interface Msg {
   role: 'user' | 'assistant';
   text: string;
-  steps: Step[];
+  entries: Entry[];
   attachmentName?: string;
 }
 
+// Written in a clinician's voice, one per capability: read the schedule, move
+// a visit, close care gaps, prior auth, appeal a denial, consult the playbook.
 const SUGGESTIONS = [
-  'Hi, I’m a new patient — sign me up',
-  'Book me a check-up tomorrow morning',
-  'My visit’s done — check me out',
-  'Insurance denied my claim — fight it',
-  'What’s our appeal win rate?',
-  'Show me the latest appeal letter',
+  'What’s on my schedule tomorrow?',
+  'Who am I seeing this afternoon?',
+  'Any overdue screenings I should close?',
+  'Start the prior auth for the MRI',
+  'This claim came back denied — appeal it',
+  'What usually wins CO-197 denials?',
 ];
 
 const STEP_ICONS: Record<Step['status'], string> = { running: '◌', done: '✓', error: '!' };
@@ -159,6 +211,50 @@ function TraceEntry({ t, onDecision }: { t: PipelineTrace; onDecision?: (d: 'app
           <button className="suggestion reject" onClick={() => onDecision('reject')}>
             <X size={13} aria-hidden /> Reject
           </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const CITATION_KINDS: Record<Citation['kind'], string> = { moss: 'criteria', pubmed: 'PubMed', named: 'guideline' };
+
+/**
+ * Sources behind one reply, collapsed by default. Retrieved ids and named
+ * authorities are labelled differently on purpose — one was looked up, the
+ * other is the answer telling you where to look.
+ */
+function Sources({ citations }: { citations: Citation[] }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="sources">
+      <button className="sources-toggle" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
+        <Quote size={11} strokeWidth={2.2} aria-hidden />
+        Sources
+        {citations.length > 0 && <span className="sources-count">{citations.length}</span>}
+        <ChevronDown size={11} className={open ? 'sources-caret open' : 'sources-caret'} aria-hidden />
+      </button>
+      {open && (
+        <div className="sources-list">
+          {citations.length === 0 ? (
+            <p className="sources-empty">
+              Nothing retrieved and nothing named — this answer came from the model’s own clinical knowledge.
+            </p>
+          ) : (
+            citations.map((c) => (
+              <div key={c.id} className="sources-item">
+                <span className={`sources-kind kind-${c.kind}`}>{CITATION_KINDS[c.kind]}</span>
+                {c.url ? (
+                  <a href={c.url} target="_blank" rel="noreferrer">
+                    {c.label}
+                    <ExternalLink size={10} aria-hidden />
+                  </a>
+                ) : (
+                  <span>{c.label}</span>
+                )}
+              </div>
+            ))
+          )}
         </div>
       )}
     </div>
@@ -319,13 +415,13 @@ export function Copilot({ models, defaultModel }: CopilotProps) {
 
       const prompt = text || 'Here is my insurance card.';
       const history = [
-        ...messagesRef.current.filter((m) => m.text || m.steps.length).map((m) => ({ role: m.role, content: m.text || '(ran tools)' })),
+        ...messagesRef.current.filter((m) => m.text || m.entries.length).map((m) => ({ role: m.role, content: m.text || '(ran tools)' })),
         { role: 'user' as const, content: prompt },
       ];
       setMessages((prev) => [
         ...prev,
-        { role: 'user', text: prompt, steps: [], attachmentName: pending?.fileName },
-        { role: 'assistant', text: '', steps: [] },
+        { role: 'user', text: prompt, entries: [], attachmentName: pending?.fileName },
+        { role: 'assistant', text: '', entries: [] },
       ]);
 
       const patchAssistant = (fn: (m: Msg) => Msg) =>
@@ -343,6 +439,13 @@ export function Copilot({ models, defaultModel }: CopilotProps) {
             messages: history,
             model: modelRef.current,
             attachment: pending ? { mediaType: pending.mediaType, base64: pending.base64 } : undefined,
+            // Whichever chart is open, so an attached document can be filed on
+            // it. Read from the URL at send time rather than via a hook, which
+            // would put a Suspense boundary around the whole panel.
+            patientId:
+              typeof window !== 'undefined'
+                ? (new URLSearchParams(window.location.search).get('p') ?? undefined)
+                : undefined,
           }),
         });
         if (!res.ok || !res.body) throw new Error(`copilot request failed (${res.status})`);
@@ -368,15 +471,25 @@ export function Copilot({ models, defaultModel }: CopilotProps) {
             if (event.type === 'text') {
               spoken += (spoken ? ' ' : '') + event.text;
               patchAssistant((m) => ({ ...m, text: m.text ? `${m.text}\n\n${event.text}` : event.text }));
+            } else if (event.type === 'thought') {
+              patchAssistant((m) => ({ ...m, entries: [...m.entries, { kind: 'thought', text: event.text }] }));
             } else if (event.type === 'tool') {
               patchAssistant((m) => {
-                const steps = [...m.steps];
-                const i = steps.findIndex((s) => s.id === event.id);
-                const base: Step = i >= 0 ? steps[i] : { id: event.id, name: event.name, summary: event.summary ?? event.name, status: event.status, trace: [] };
-                const step: Step = { ...base, name: event.name, summary: event.summary ?? base.summary, status: event.status, detail: event.detail };
-                if (i >= 0) steps[i] = step;
-                else steps.push(step);
-                return { ...m, steps };
+                const entries = [...m.entries];
+                const i = entries.findIndex((e) => e.kind === 'step' && e.id === event.id);
+                const base = i >= 0 ? (entries[i] as { kind: 'step' } & Step) : null;
+                const step: { kind: 'step' } & Step = {
+                  kind: 'step',
+                  id: event.id,
+                  name: event.name,
+                  summary: event.summary ?? base?.summary ?? event.name,
+                  status: event.status,
+                  detail: event.detail,
+                  trace: base?.trace ?? [],
+                };
+                if (i >= 0) entries[i] = step;
+                else entries.push(step);
+                return { ...m, entries };
               });
               if (event.refresh) router.refresh();
             } else if (event.type === 'pipeline') {
@@ -385,17 +498,25 @@ export function Copilot({ models, defaultModel }: CopilotProps) {
               // the local original, which is then dropped with `pending`.
               if (event.step === 'redact-document' && pending && Array.isArray(data?.boxes)) {
                 try {
-                  data = { ...data, redactedImage: await drawRedactedImage(pending.dataUrl, data.boxes as PhiBox[]) };
+                  const redactedImage = await drawRedactedImage(pending.dataUrl, data.boxes as PhiBox[]);
+                  data = { ...data, redactedImage };
+                  // The redacted copy is the only one that may be kept, and the
+                  // browser holds it — so filing happens here, not on the server.
+                  const filing = data.filing as { patientId?: string } | null | undefined;
+                  if (filing?.patientId) {
+                    void fileOnChart(filing.patientId, redactedImage, pending.fileName, data);
+                  }
                 } catch (err) {
                   console.warn('[copilot] could not render the redacted document:', err);
                 }
               }
               patchAssistant((m) => {
-                const steps = [...m.steps];
-                const i = steps.findIndex((s) => s.id === event.toolId);
+                const entries = [...m.entries];
+                const i = entries.findIndex((e) => e.kind === 'step' && e.id === event.toolId);
                 if (i < 0) return m;
-                steps[i] = { ...steps[i], trace: [...steps[i].trace, { step: event.step, detail: event.detail, data }] };
-                return { ...m, steps };
+                const step = entries[i] as { kind: 'step' } & Step;
+                entries[i] = { ...step, trace: [...step.trace, { step: event.step, detail: event.detail, data }] };
+                return { ...m, entries };
               });
             } else if (event.type === 'error') {
               patchAssistant((m) => ({ ...m, text: m.text ? `${m.text}\n\nError: ${event.message}` : `Error: ${event.message}` }));
@@ -529,8 +650,9 @@ export function Copilot({ models, defaultModel }: CopilotProps) {
         {messages.length === 0 && (
           <div className="copilot-empty">
             <p>
-              Ask in plain language — I check status, draft appeals, run patient outreach, and file prior auths on the
-              live pipeline. Press <kbd>⌘K</kbd> anytime{voiceSupported ? ', or tap the mic and just talk' : ''}.
+              Ask in plain language — I read your schedule, move visits, chase prior auths, appeal denials, and run
+              patient outreach on the live pipeline. Press <kbd>⌘K</kbd> anytime
+              {voiceSupported ? ', or tap the mic and just talk' : ''}.
             </p>
             <div className="suggestions">
               {SUGGESTIONS.map((s) => (
@@ -543,30 +665,40 @@ export function Copilot({ models, defaultModel }: CopilotProps) {
         )}
         {messages.map((m, i) => (
           <div key={i} className={`msg ${m.role}`}>
-            {m.steps.length > 0 && (
+            {m.entries.length > 0 && (
               <div className="steps">
-                {m.steps.map((s) => (
-                  <div key={s.id} className={`step-block ${s.status}`}>
-                    <div className="step" title={s.detail}>
-                      <span className="step-icon">{STEP_ICONS[s.status]}</span>
-                      <span className="step-name">{s.name === 'run_agent' ? 'run agent' : s.name.replace(/_/g, ' ')}</span>
-                      <span className="step-summary">{s.summary}</span>
+                {m.entries.map((e, ei) =>
+                  e.kind === 'thought' ? (
+                    <div key={ei} className="thought">
+                      <BrainCircuit size={12} strokeWidth={2.1} aria-hidden />
+                      <span>{renderRedacted(e.text)}</span>
                     </div>
-                    {s.trace.length > 0 && (
-                      <div className="trace">
-                        {s.trace.map((t, ti) => (
-                          <TraceEntry
-                            key={ti}
-                            t={t}
-                            onDecision={(d) =>
-                              send(d === 'approve' ? 'Approve the appeal draft and send it.' : 'Reject the appeal draft.')
-                            }
-                          />
-                        ))}
+                  ) : (
+                    <div key={e.id} className={`step-block ${e.status}`}>
+                      <div className="step">
+                        <span className="step-icon">{STEP_ICONS[e.status]}</span>
+                        <span className="step-name">{e.name === 'run_agent' ? 'run agent' : e.name.replace(/_/g, ' ')}</span>
+                        <span className="step-summary">{e.summary}</span>
                       </div>
-                    )}
-                  </div>
-                ))}
+                      {/* What the tool actually returned — the patient, the chart, the
+                          appointment — shown rather than hidden in a tooltip. */}
+                      {e.detail && <div className="step-detail">{renderRedacted(e.detail)}</div>}
+                      {e.trace.length > 0 && (
+                        <div className="trace">
+                          {e.trace.map((t, ti) => (
+                            <TraceEntry
+                              key={ti}
+                              t={t}
+                              onDecision={(d) =>
+                                send(d === 'approve' ? 'Approve the appeal draft and send it.' : 'Reject the appeal draft.')
+                              }
+                            />
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ),
+                )}
               </div>
             )}
             {m.attachmentName && (
@@ -575,7 +707,15 @@ export function Copilot({ models, defaultModel }: CopilotProps) {
               </div>
             )}
             {m.text && <div className="bubble">{renderRedacted(m.text)}</div>}
-            {m.role === 'assistant' && !m.text && m.steps.length === 0 && busy && i === messages.length - 1 && (
+            {m.role === 'assistant' && m.text && (
+              <Sources
+                citations={collectCitations(
+                  m.entries.flatMap((e) => (e.kind === 'step' ? e.trace : [])).flatMap((t) => (t.data?.sources as RetrievedSource[]) ?? []),
+                  m.text,
+                )}
+              />
+            )}
+            {m.role === 'assistant' && !m.text && m.entries.length === 0 && busy && i === messages.length - 1 && (
               <div className="bubble thinking">
                 <span className="pulse-dot" /> thinking…
               </div>

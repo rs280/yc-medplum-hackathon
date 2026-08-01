@@ -82,6 +82,23 @@ export async function loadAttachment(file: File): Promise<ImageAttachment> {
   return { fileName: file.name, mediaType: 'image/jpeg', dataUrl, base64: dataUrl.split(',')[1] ?? '' };
 }
 
+// Legible enough to read a filed card back, small enough that a chart holding
+// several of them still renders fast.
+const STORAGE_EDGE = 900;
+
+/**
+ * Re-encode a redacted render down to chart-storage size. Documents are stored
+ * inline as base64 in FHIR, so the copy that is kept forever is deliberately
+ * smaller than the copy shown in the chat.
+ */
+export async function shrinkForStorage(dataUrl: string): Promise<string> {
+  const image = await decodeImage(dataUrl);
+  const scale = Math.min(1, STORAGE_EDGE / Math.max(image.width, image.height));
+  const [canvas, ctx] = canvasFor(Math.round(image.width * scale), Math.round(image.height * scale));
+  ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL('image/jpeg', 0.7).split(',')[1] ?? '';
+}
+
 /**
  * Render the safe copy of a document: the page as-is, with opaque boxes over
  * the regions the pass identified. The rest stays readable so the front desk

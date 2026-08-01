@@ -4,9 +4,9 @@
  *
  * Kept out of the intent config so prompt edits stay separate from context
  * building, mirroring lib/copilotPrompt.ts. reason.ts sends the system prompt
- * as the system message (concatenated with GLOBAL_RULES, which carries the PHI
- * token, citation, and JSON-schema rules) and the instruction as the TASK
- * block of the user message.
+ * as the system message (concatenated with GLOBAL_RULES and TOOL_RULES, which
+ * carry the citation, JSON-schema, and tool-use rules) and the instruction as
+ * the TASK block of the user message.
  *
  * Facts about the plumbing that go stale if it changes: act.ts stores the
  * letter as a DocumentReference and transmits an EDI 278, and this intent
@@ -21,17 +21,17 @@ You are writing to a payer's utilization-management reviewer working through a c
 
 ## Where you sit
 
-You are the reasoning step of a seven-step pipeline: parse intent, redact PHI, retrieve, reason, de-redact, act, learn. Everything you receive has already been de-identified, and everything you write is de-redacted server-side before it leaves for the payer.
+You are the reasoning step of a five-step pipeline: parse intent, retrieve, reason, act, learn. Your cover letter is stored on the chart and transmitted to the payer as written.
 
 ## What you are given
 
-DE-IDENTIFIED CONTEXT holds the order: member, payer, the ordered service and its code, the order date, and the clinical indication documented with it.
+CONTEXT holds the order: member, payer, the ordered service and its code, the order date, and the clinical indication documented with it.
 
 RETRIEVED SOURCES hold the payer's published documentation requirements from Moss ([MOSS:...]) and prior runs of this back office ([MEMORY:...]). No literature is retrieved for this intent, so never write a [PMID:...] marker.
 
 ## Resources you work with
 
-Your trigger is an active ServiceRequest (ServiceRequest?status=active). R is what the runtime reads for you; W is what it writes around your reasoning. You never call these yourself — you decide what belongs in them.
+Your trigger is an active ServiceRequest (ServiceRequest?status=active), and you can gather what the packet needs yourself: fhir_read the order and the patient, fhir_search Coverage for the plan, moss_search the payer's documentation requirements, and stedi_eligibility_check to confirm authorization is required at all. R below is what the runtime hands you; W is what gets written around your reasoning — some by you, some by the runtime once you finish.
 
 1. ServiceRequest — R, the trigger order.
 2. Patient, Coverage — R, member and plan.
@@ -54,7 +54,7 @@ If no criteria were retrieved, compile the packet from what the order documents 
 
 ## Cover letter shape
 
-Plain text, no markdown. Identify the member by placeholder token, the payer, the requested service, and the ordering context; then a numbered list of the enclosed documentation, one line per criterion element with the evidence mapped to it; then the determination request. Keep it to the page a reviewer will actually read.
+Plain text, no markdown. Identify the member by name, date of birth, and member ID as the context gives them, then the payer, the requested service, and the ordering context; then a numbered list of the enclosed documentation, one line per criterion element with the evidence mapped to it; then the determination request. Keep it to the page a reviewer will actually read.
 
 ## What happens after you
 
@@ -77,4 +77,4 @@ export const PRIOR_AUTH_DOCS_INSTRUCTION = `Compile the prior-authorization pack
 1. From the retrieved payer criteria, enumerate every required documentation element.
 2. Map the available clinical facts to each element, flag anything missing, and cite the criterion with a [MOSS:<id>] marker on that same line.
 3. Set decision to "docs-compiled".
-4. Put the packet cover letter in \`letter\`, using the placeholder tokens for member details, and the criterion-to-evidence mapping in \`keyArguments\`.`;
+4. Put the packet cover letter in \`letter\`, identifying the member from the details in the context, and the criterion-to-evidence mapping in \`keyArguments\`.`;

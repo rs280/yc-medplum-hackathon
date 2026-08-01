@@ -1,16 +1,25 @@
 import 'server-only';
-import { getLlmClient, isLlmConfigured, reasonModelId } from './llmClient';
-import type { Redacted } from '@/types/redacted';
+import type Anthropic from '@anthropic-ai/sdk';
+import { AGENT_TOOLS, AgentToolbox } from './agentTools';
 import type { IntentConfig } from './intents/shared';
+import { getLlmClient, isLlmConfigured, reasonModelId } from './llmClient';
+import type { FhirStore } from './medplum.server';
+import type { PipelineStepEvent } from './pipeline';
 import type { RetrievedSource } from './retrieve';
 
 /**
- * Step 4: reason + act plan. The LLM sees ONLY redacted context (enforced by
- * the Redacted<string> parameter type) plus the retrieved sources. Output is
- * structured JSON; citation integrity is enforced afterwards — any citation
- * marker not present in the retrieval results is rejected and the line
- * carrying it is dropped. Without an API key (or on failure/refusal) a
- * deterministic template produces the artifact so the pipeline never blocks.
+ * Step 3: reason + act plan, run as a tool-using agent. The model gathers what
+ * it needs over a few tool turns (FHIR, Moss, PubMed, run memory, Stedi), then
+ * a final call produces the structured artifact.
+ *
+ * Two rules keep the loop honest and are easy to break by "simplifying" it:
+ * gather turns must NOT carry output_config.format (a tool_use turn has no
+ * text block, so JSON.parse('') would throw and silently degrade the run to a
+ * template letter), and ids the model retrieves mid-run must be added to the
+ * citation allowlist before enforcement or the validator deletes those lines.
+ *
+ * Without an API key (or on failure/refusal) a deterministic template produces
+ * the artifact so the pipeline never blocks.
  */
 
 export interface ReasonOutput {
@@ -22,7 +31,27 @@ export interface ReasonOutput {
   citations: string[];
   engine: 'anthropic' | 'template';
   droppedCitations: number;
+  /** Pre-retrieved sources plus everything the agent's own tool calls found. */
+  sources: RetrievedSource[];
+  toolCalls: number;
 }
+
+/** The artifact itself, before the engine, citation, and tool bookkeeping. */
+type ArtifactFields = Pick<ReasonOutput, 'decision' | 'rationale' | 'letter' | 'keyArguments' | 'actions' | 'citations'>;
+
+export interface ReasonDeps {
+  store: FhirStore;
+  /** Label → FHIR reference, so the agent has handles to read and search with. */
+  refs: Record<string, string>;
+  onStep?: (event: PipelineStepEvent) => void;
+}
+
+/** Gather turns are tool calls and short reasoning; the artifact comes later. */
+const MAX_GATHER_TURNS = 4;
+const GATHER_MAX_TOKENS = 4000;
+const ARTIFACT_MAX_TOKENS = 8000;
+/** reason() runs inside a chat-route tool call under that route's 300s ceiling. */
+const GATHER_BUDGET_MS = 90_000;
 
 const RESPONSE_SCHEMA = {
   type: 'object',
@@ -40,10 +69,18 @@ const RESPONSE_SCHEMA = {
 
 const GLOBAL_RULES = `
 HARD RULES:
-1. The context is de-identified. Placeholder tokens like [NAME_1], [DOB_1], [MRN_1], [ID_1], [PHONE_1] stand for real values and MUST be reproduced exactly as written wherever you refer to that detail. Never invent names, dates of birth, or identifiers.
-2. Cite evidence ONLY with inline markers [MOSS:<id>], [MEMORY:<id>], or [PMID:<id>] whose ids appear in RETRIEVED SOURCES below. Citing anything else is forbidden — uncited or falsely-cited lines will be deleted by a validator.
+1. Use the member's name, dates, and identifiers exactly as the context gives them. Never invent a name, date of birth, or identifier.
+2. Cite evidence ONLY with inline markers [MOSS:<id>], [MEMORY:<id>], or [PMID:<id>] whose ids appear in RETRIEVED SOURCES below, or that one of your own retrieval tool calls (moss_search, pubmed_search, memory_search) returned to you during this run. Citing anything else is forbidden — falsely-cited lines will be deleted by a validator.
 2b. A [MEMORY:*] source is what THIS back office actually did on a previous run of a related case. Treat it as institutional experience: reuse an approach recorded as WON, and strengthen or change one recorded as LOST. When a prior run on the same claim already established a fact (e.g. triage flagged a missing authorization), say so explicitly and cite it.
-3. Respond with JSON matching the required schema. "citations" lists exactly the source ids you actually used.`;
+3. When you are asked for the final artifact, respond with JSON matching the required schema, and let "citations" list exactly the source ids you actually used. Until then, use tools and keep your prose short — do not draft the artifact while you are still gathering.`;
+
+const TOOL_RULES = `
+TOOLS:
+- You can read and write this clinic's datastore directly. Look things up rather than assuming them, and stop calling tools as soon as you have what you need.
+- fhir_search accepts only the parameters in its schema. There is no date, text, or sort search — find by reference, status, code, or identifier, then read what you need.
+- Writes are additive: create or patch. There is no delete; retract something by patching its status to "entered-in-error", "revoked", or "cancelled".
+- Link anything you create back to this case via subject, focus, or basedOn, or nobody will find it again.
+- After you finish, the runtime performs the standard dispatch for this run on its own: it books the appointments, files the prior-auth packet DocumentReference with its provenance category, writes the Task and Communication, and transmits the EDI (837 / 275 / 278). Do not duplicate that work — call the EDI tools only for a transmission you specifically intend on top of it.`;
 
 // 'anthropic' means "LLM-backed" (direct or via OpenRouter); 'template' is the no-key fallback.
 export function reasonEngine(): 'anthropic' | 'template' {
@@ -88,17 +125,15 @@ function firstSentence(s: string): string {
 
 function templateOutput(
   intent: IntentConfig,
-  contextText: string,
   sources: RetrievedSource[],
   meta: Record<string, string>,
-): Omit<ReasonOutput, 'engine' | 'droppedCitations'> {
+): ArtifactFields {
   const criteria = sources.find((s) => s.kind === 'moss' && s.title.startsWith('criteria'));
   const playbook = sources.find((s) => s.kind === 'moss' && (s.id.includes('pb-') || s.id.includes('learned-')));
   const learned = sources.find((s) => s.id.startsWith('MOSS:learned-'));
   const priorRun = sources.find((s) => s.kind === 'memory');
   const pmids = sources.filter((s) => s.kind === 'pubmed');
-  const hasMemberTokens = contextText.includes('[NAME_1]');
-  const memberLine = hasMemberTokens ? 'Member: [NAME_1] (DOB [DOB_1], MRN [MRN_1])' : '';
+  const memberLine = meta.patientName ? `Member: ${meta.patientName}` : '';
 
   switch (intent.name) {
     case 'denial-appeal': {
@@ -179,8 +214,8 @@ function templateOutput(
     case 'discharge-caregap': {
       const protocol = sources.find((s) => s.id.includes('protocol'));
       const gapCount = Number(meta.overdueCount ?? '0');
-      const letter = hasMemberTokens
-        ? `Hi [NAME_1], this is the care team checking in after your ${meta.diagnosis ?? 'procedure'}. Call us right away for fever over 101F, severe pain, yellowing skin, or vomiting. We'd like to book your follow-up visit within 2 weeks${gapCount ? ` — and our records show your ${meta.overdueList} is overdue, so we can schedule both in one call` : ''}. Reply YES and we'll set it up.`
+      const letter = meta.patientName
+        ? `Hi ${meta.patientName.split(' ')[0]}, this is the care team checking in after your ${meta.diagnosis ?? 'procedure'}. Call us right away for fever over 101F, severe pain, yellowing skin, or vomiting. We'd like to book your follow-up visit within 2 weeks${gapCount ? ` — and our records show your ${meta.overdueList} is overdue, so we can schedule both in one call` : ''}. Reply YES and we'll set it up.`
         : `Post-discharge outreach planned: red-flag screen, follow-up within 2 weeks${gapCount ? `, close ${gapCount} overdue screening(s)` : ''}.`;
       return {
         decision: 'outreach-planned',
@@ -222,61 +257,216 @@ function templateOutput(
 
 // ── Main entry ──────────────────────────────────────────────────────────────
 
+/** OpenRouter can answer 200 with a provider error in place of a message. */
+function providerError(response: unknown): string | undefined {
+  return (response as { error?: { message?: string } }).error?.message;
+}
+
+interface GatherResult {
+  messages: Anthropic.MessageParam[];
+  toolCalls: number;
+  turns: number;
+  refused: boolean;
+}
+
+/**
+ * Tool-gathering turns. No output_config.format here — see the module header.
+ */
+async function gatherWithTools(
+  client: Anthropic,
+  system: string,
+  firstMessage: Anthropic.MessageParam,
+  toolbox: AgentToolbox,
+  effort: 'low' | 'medium' | 'high',
+  emit: (step: string, detail: string, data?: Record<string, unknown>) => void,
+): Promise<GatherResult> {
+  const messages: Anthropic.MessageParam[] = [firstMessage];
+  const deadline = Date.now() + GATHER_BUDGET_MS;
+  let toolCalls = 0;
+  let turns = 0;
+
+  for (let turn = 0; turn < MAX_GATHER_TURNS; turn++) {
+    if (Date.now() > deadline) {
+      console.warn('[reason] gather budget spent — going to the artifact with what we have');
+      break;
+    }
+    turns++;
+    const response = await client.messages.create({
+      model: reasonModelId(),
+      max_tokens: GATHER_MAX_TOKENS,
+      system,
+      output_config: { effort },
+      tools: AGENT_TOOLS,
+      messages,
+    });
+
+    if (!Array.isArray(response.content)) {
+      console.warn(`[reason] gather turn returned no content: ${providerError(response) ?? 'unknown provider error'}`);
+      break;
+    }
+    if (response.stop_reason === 'refusal') {
+      console.warn('[reason] model refusal during gather — falling back to template');
+      return { messages, toolCalls, turns, refused: true };
+    }
+
+    // Pushed unconditionally, unlike the copilot's loop which returns here:
+    // the model's final reasoning turn has to be in the transcript for the
+    // artifact call that follows.
+    messages.push({ role: 'assistant', content: response.content });
+    if (response.stop_reason !== 'tool_use') break;
+
+    const toolResults: Anthropic.ToolResultBlockParam[] = [];
+    for (const block of response.content) {
+      if (block.type !== 'tool_use') continue;
+      toolCalls++;
+      const input = (block.input ?? {}) as Record<string, unknown>;
+      try {
+        const { content, detail } = await toolbox.execute(block.name, input);
+        emit(`agent-tool → ${block.name}`, detail, sourceData(block.name, toolbox));
+        toolResults.push({ type: 'tool_result', tool_use_id: block.id, content });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        emit(`agent-tool → ${block.name}`, `failed — ${message}`);
+        toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: `Error: ${message}`, is_error: true });
+      }
+    }
+    messages.push({ role: 'user', content: toolResults });
+  }
+
+  return { messages, toolCalls, turns, refused: false };
+}
+
+/** Retrieval tools surface their hits as trace chips; the rest have nothing to show. */
+function sourceData(toolName: string, toolbox: AgentToolbox): Record<string, unknown> | undefined {
+  if (!['moss_search', 'pubmed_search', 'memory_search'].includes(toolName)) return undefined;
+  return {
+    sources: toolbox.discoveredSources.map((s) => ({
+      id: s.id,
+      kind: s.kind,
+      title: s.title,
+      snippet: s.text.slice(0, 220),
+    })),
+  };
+}
+
+const FINAL_INSTRUCTION =
+  'You now have everything you need. Produce the final artifact as JSON matching the required schema. Cite only ids that appeared in RETRIEVED SOURCES or that your own retrieval tool calls returned during this run.';
+
+/** Roles must alternate, so a trailing tool_result turn absorbs the instruction. */
+function appendFinalInstruction(messages: Anthropic.MessageParam[]): Anthropic.MessageParam[] {
+  const last = messages[messages.length - 1];
+  if (last?.role === 'user' && Array.isArray(last.content)) {
+    return [...messages.slice(0, -1), { role: 'user', content: [...last.content, { type: 'text', text: FINAL_INSTRUCTION }] }];
+  }
+  return [...messages, { role: 'user', content: FINAL_INSTRUCTION }];
+}
+
+function buildUserMessage(
+  intent: IntentConfig,
+  contextText: string,
+  sources: RetrievedSource[],
+  refs: Record<string, string>,
+): Anthropic.MessageParam {
+  const handles = Object.entries(refs)
+    .map(([label, reference]) => `- ${label}: ${reference}`)
+    .join('\n');
+  return {
+    role: 'user',
+    content: [
+      `TASK:\n${intent.instruction}`,
+      handles ? `RESOURCE HANDLES (use these with fhir_read / fhir_search):\n${handles}` : '',
+      `CONTEXT:\n${contextText}`,
+      `RETRIEVED SOURCES:\n${sourcesBlock(sources)}`,
+    ]
+      .filter(Boolean)
+      .join('\n\n'),
+  };
+}
+
 export async function reason(
   intent: IntentConfig,
-  contextText: Redacted,
+  contextText: string,
   sources: RetrievedSource[],
   meta: Record<string, string>,
+  deps: ReasonDeps,
 ): Promise<ReasonOutput> {
-  const allowed = new Set(sources.map((s) => s.id));
   const client = getLlmClient();
+  const toolbox = new AgentToolbox(deps.store);
+  const emit = (step: string, detail: string, data?: Record<string, unknown>) => deps.onStep?.({ step, detail, data });
 
-  let raw: Omit<ReasonOutput, 'engine' | 'droppedCitations'> | null = null;
+  let raw: ArtifactFields | null = null;
   let engine: ReasonOutput['engine'] = 'template';
+  let toolCalls = 0;
 
   if (client) {
     try {
+      const effort = (process.env.ANTHROPIC_EFFORT as 'low' | 'medium' | 'high') || 'low';
+      const system = `${intent.systemPrompt}\n${GLOBAL_RULES}\n${TOOL_RULES}`;
+      const gathered = await gatherWithTools(
+        client,
+        system,
+        buildUserMessage(intent, contextText, sources, deps.refs),
+        toolbox,
+        effort,
+        emit,
+      );
+      toolCalls = gathered.toolCalls;
+      if (gathered.refused) throw new Error('model refused during gather');
+
+      const newSources = toolbox.discoveredSources.filter((s) => !sources.some((p) => p.id === s.id));
+      emit(
+        'agent-tools',
+        `${gathered.toolCalls} call(s) over ${gathered.turns} turn(s), ${newSources.length} new source(s)`,
+        { toolCalls: gathered.toolCalls, turns: gathered.turns },
+      );
+
+      // No `tools` on this call: a tool_use turn carries no text block, so
+      // JSON.parse would throw and the run would degrade to the template.
       const response = await client.messages.create({
         model: reasonModelId(),
-        max_tokens: 8000,
-        system: `${intent.systemPrompt}\n${GLOBAL_RULES}`,
+        max_tokens: ARTIFACT_MAX_TOKENS,
+        system,
         output_config: {
-          effort: (process.env.ANTHROPIC_EFFORT as 'low' | 'medium' | 'high') || 'low',
+          effort,
           format: { type: 'json_schema', schema: RESPONSE_SCHEMA as unknown as Record<string, unknown> },
         },
-        messages: [
-          {
-            role: 'user',
-            content: `TASK:\n${intent.instruction}\n\nDE-IDENTIFIED CONTEXT:\n${contextText}\n\nRETRIEVED SOURCES:\n${sourcesBlock(sources)}`,
-          },
-        ],
+        messages: appendFinalInstruction(gathered.messages),
       });
-      if (response.stop_reason === 'refusal') {
-        console.warn('[reason] model refusal — falling back to template');
-      } else {
-        const text = response.content.find((b) => b.type === 'text')?.text ?? '';
-        const parsed = JSON.parse(text) as Omit<ReasonOutput, 'engine' | 'droppedCitations'>;
-        raw = {
-          decision: parsed.decision || 'completed',
-          rationale: parsed.rationale || '',
-          letter: parsed.letter || '',
-          keyArguments: parsed.keyArguments ?? [],
-          actions: parsed.actions ?? [],
-          citations: parsed.citations ?? [],
-        };
-        engine = 'anthropic';
+
+      if (!Array.isArray(response.content)) {
+        throw new Error(`artifact call returned no content: ${providerError(response) ?? 'unknown provider error'}`);
       }
+      if (response.stop_reason === 'refusal') throw new Error('model refused on the artifact call');
+      const text = response.content.find((b) => b.type === 'text')?.text ?? '';
+      if (!text.trim()) throw new Error('artifact call returned no text block');
+
+      const parsed = JSON.parse(text) as ArtifactFields;
+      raw = {
+        decision: parsed.decision || 'completed',
+        rationale: parsed.rationale || '',
+        letter: parsed.letter || '',
+        keyArguments: parsed.keyArguments ?? [],
+        actions: parsed.actions ?? [],
+        citations: parsed.citations ?? [],
+      };
+      engine = 'anthropic';
     } catch (err) {
-      console.warn('[reason] LLM call failed — falling back to template:', err);
+      console.warn('[reason] LLM path failed — falling back to template:', err);
     }
   }
 
   if (!raw) {
-    raw = templateOutput(intent, contextText as string, sources, meta);
+    raw = templateOutput(intent, sources, meta);
     engine = 'template';
   }
 
-  const enforced = enforceCitations(raw, allowed);
+  // What the agent retrieved mid-run is citable too, but only on the LLM path:
+  // templateOutput only ever knows the pre-retrieved ids.
+  const byId = new Map(sources.map((s) => [s.id, s]));
+  for (const s of toolbox.discoveredSources) if (!byId.has(s.id)) byId.set(s.id, s);
+  const finalSources = engine === 'anthropic' ? [...byId.values()] : sources;
+
+  const enforced = enforceCitations(raw, new Set(finalSources.map((s) => s.id)));
   if (enforced.dropped > 0) {
     console.warn(`[reason] citation validator dropped ${enforced.dropped} line(s) with invented citations`);
   }
@@ -286,5 +476,7 @@ export async function reason(
     citations: enforced.citations,
     engine,
     droppedCitations: enforced.dropped,
+    sources: finalSources,
+    toolCalls,
   };
 }

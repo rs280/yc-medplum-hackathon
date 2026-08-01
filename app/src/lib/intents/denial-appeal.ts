@@ -13,6 +13,7 @@ import {
   refOf,
   type IntentConfig,
 } from './shared';
+import { patientDisplayName } from '../patients.server';
 import { DENIAL_APPEAL_INSTRUCTION, DENIAL_APPEAL_SYSTEM_PROMPT } from './prompts/denial-appeal';
 
 export const denialAppeal: IntentConfig = {
@@ -38,12 +39,11 @@ export const denialAppeal: IntentConfig = {
       claim?.supportingInfo?.map((s) => s.valueString).filter(Boolean).join(' ') ??
       'See attached clinical documentation.';
     const claimIdentifier = claim?.identifier?.[0]?.value ?? claimRef ?? 'unknown';
-    const name = patient?.name?.[0];
-    const fullName = [name?.given?.join(' '), name?.family].filter(Boolean).join(' ');
+    const patientName = patient ? patientDisplayName(patient) : '';
 
     const contextTextRaw = [
       'MEMBER',
-      `- Name: ${fullName || 'unknown'}`,
+      `- Name: ${patientName || 'unknown'}`,
       `- DOB: ${patient?.birthDate ?? 'unknown'}`,
       `- MRN: ${patient?.identifier?.[0]?.value ?? 'unknown'}`,
       `- Member ID: ${coverage?.subscriberId ?? 'unknown'}`,
@@ -75,6 +75,7 @@ export const denialAppeal: IntentConfig = {
       pubmedTermRaw: pubmedTermFor(codeOf(procedure), denial.code),
       phiResources: [cr, claim, patient, coverage],
       meta: {
+        patientName,
         procedure: procedureText,
         payer,
         denialCode: denial.code,

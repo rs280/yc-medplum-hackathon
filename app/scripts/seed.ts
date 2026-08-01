@@ -15,8 +15,11 @@ import type {
   ServiceRequest,
 } from '@medplum/fhirtypes';
 import { getStore, type FhirStore } from '@/lib/medplum.server';
+import { recordVitals } from '@/lib/vitals.server';
 
 const IDS = 'https://autonomous-backoffice.dev/demo';
+/** Fixed so re-seeding is a genuine no-op, not a restamp. */
+const SEED_VITALS_AT = '2026-07-28T17:00:00.000Z';
 const CPT = 'http://www.ama-assn.org/go/cpt';
 const ICD10 = 'http://hl7.org/fhir/sid/icd-10-cm';
 
@@ -57,6 +60,7 @@ async function main(): Promise<void> {
     identifier: [{ system: `${IDS}/mrn`, value: 'MRN-001234' }],
     name: [{ given: ['Jane', 'Q'], family: 'Doe' }],
     birthDate: '1968-04-12',
+    gender: 'female',
     telecom: [
       { system: 'phone', value: '+15555550123' },
       { system: 'email', value: 'jane.doe@example.com' },
@@ -64,6 +68,25 @@ async function main(): Promise<void> {
     address: [{ line: ['123 Harbor Lane'], city: 'Oakland', state: 'CA', postalCode: '94607' }],
   }));
   const patientRef = `Patient/${patient.id}`;
+
+  // ensure() never touches an existing row, so a store seeded before `gender`
+  // existed would stay blank forever without this.
+  if (!patient.gender) {
+    await store.update<Patient>({ ...patient, gender: 'female' });
+    console.log('~ Patient MRN-001234 gender backfilled');
+  }
+
+  // Idempotent by identifier, the same contract ensure() gives everything else.
+  // observedAt is fixed rather than `now` so re-seeding changes nothing at all —
+  // a moving timestamp would restamp the readings and mark every chart overview
+  // stale on each run.
+  await recordVitals({
+    patientId: patient.id,
+    vitals: { heightCm: 168, weightKg: 67.1, systolic: 128, diastolic: 82, heartRate: 74, observedAt: SEED_VITALS_AT },
+    identifierPrefix: 'VITAL-MRN-001234',
+    store,
+  });
+  console.log('+ Observation vitals for MRN-001234 (height, weight, BP, heart rate)');
 
   const coverage = await ensure<Coverage>(store, 'Coverage', 'DEMO-COV-1', () => ({
     resourceType: 'Coverage',

@@ -8,6 +8,7 @@ import {
   refOf,
   type IntentConfig,
 } from './shared';
+import { patientDisplayName } from '../patients.server';
 import { PRIOR_AUTH_DOCS_INSTRUCTION, PRIOR_AUTH_DOCS_SYSTEM_PROMPT } from './prompts/prior-auth-docs';
 
 export const priorAuthDocs: IntentConfig = {
@@ -24,6 +25,7 @@ export const priorAuthDocs: IntentConfig = {
     const patient = await readRef<Patient>(store, patientRef);
     const coverage = await coverageFor(store, patientRef);
     const payer = payerNameOf(coverage);
+    const patientName = patient ? patientDisplayName(patient) : '';
     const procedureText = displayOf(sr.code) || 'the ordered service';
     const clinicalNote =
       sr.note?.map((n) => n.text).filter(Boolean).join(' ') ??
@@ -32,7 +34,7 @@ export const priorAuthDocs: IntentConfig = {
 
     const contextTextRaw = [
       'ORDER REQUIRING PRIOR AUTHORIZATION',
-      `- Patient: ${[patient?.name?.[0]?.given?.join(' '), patient?.name?.[0]?.family].filter(Boolean).join(' ') || 'unknown'}`,
+      `- Patient: ${patientName || 'unknown'}`,
       `- DOB: ${patient?.birthDate ?? 'unknown'}`,
       `- Member ID: ${coverage?.subscriberId ?? 'unknown'}`,
       `- Payer: ${payer}`,
@@ -49,7 +51,7 @@ export const priorAuthDocs: IntentConfig = {
       contextTextRaw,
       queryRaw: `${payer} prior authorization documentation requirements ${procedureText}`,
       phiResources: [sr, patient, coverage],
-      meta: { procedure: procedureText, payer },
+      meta: { patientName, procedure: procedureText, payer },
     };
   },
 };

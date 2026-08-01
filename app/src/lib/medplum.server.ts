@@ -21,6 +21,9 @@ export interface FhirStore {
   search<T extends Resource>(resourceType: T['resourceType'], params?: Record<string, string>): Promise<T[]>;
 }
 
+/** One page big enough to hold this demo's whole store; Medplum's own cap is 1000. */
+const DEFAULT_PAGE_SIZE = '1000';
+
 function isConfigured(): boolean {
   return Boolean(process.env.MEDPLUM_CLIENT_ID && process.env.MEDPLUM_CLIENT_SECRET);
 }
@@ -169,7 +172,12 @@ const medplumStore: FhirStore = {
   },
   async search<T extends Resource>(resourceType: T['resourceType'], params: Record<string, string> = {}): Promise<T[]> {
     const client = await getMedplumClient();
-    const result = await client.searchResources(resourceType, params);
+    // Medplum pages at 20 by default and searchResources() returns only the
+    // first page, so an unbounded search silently truncates — which is worse
+    // than an error, because callers that fetch-all-then-filter in JS (Task by
+    // `for`, Appointment by date) just lose rows. Ask for one large page
+    // instead; DEFAULT_PAGE_SIZE is the ceiling this demo store is sized for.
+    const result = await client.searchResources(resourceType, { _count: DEFAULT_PAGE_SIZE, ...params });
     return [...result] as T[];
   },
 };

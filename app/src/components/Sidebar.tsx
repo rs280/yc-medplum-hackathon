@@ -34,7 +34,9 @@ export function Sidebar() {
       </Link>
       <div className="sidebar-nav">
         {NAV.map(({ href, label, sub, icon: Icon }) => {
-          const active = pathname.startsWith(href);
+          // Exact match, plus a `/` guard for future detail routes — a prefix
+          // test alone lights up both /patient and /patients.
+          const active = pathname === href || pathname.startsWith(`${href}/`);
           return (
             <Link key={href} href={href} className={`sidebar-item ${active ? 'active' : ''}`} aria-current={active ? 'page' : undefined}>
               <Icon size={17} strokeWidth={2} aria-hidden />

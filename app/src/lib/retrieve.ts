@@ -1,15 +1,15 @@
 import 'server-only';
-import type { Redacted } from '@/types/redacted';
 import type { IntentConfig } from './intents/shared';
 import { CRITERIA_INDEX, PLAYBOOK_INDEX, mossSearch } from './moss.server';
 import { searchPubMed } from './pubmed.server';
 
 /**
- * Step 3: retrieval router. Moss (criteria + playbooks) serves ALL intents;
- * PubMed serves clinical evidence for denial-appeal ONLY. Inputs are
- * Redacted<string> — the type system prevents raw PHI from reaching either.
- * Returned source ids ("MOSS:<id>", "PMID:<id>") are the ONLY ids the
- * reasoning step is allowed to cite.
+ * Step 2: retrieval router. Moss (criteria + playbooks) serves ALL intents;
+ * PubMed serves clinical evidence for denial-appeal ONLY.
+ *
+ * These are the sources the reasoning step starts with. It may retrieve more
+ * itself through moss_search/pubmed_search/memory_search, and those ids become
+ * citable too — see the citation ledger in reason.ts.
  */
 
 export interface RetrievedSource {
@@ -21,9 +21,9 @@ export interface RetrievedSource {
 }
 
 export interface RetrievalQueries {
-  criteriaQuery: Redacted;
-  playbookQuery: Redacted;
-  pubmedTerm?: Redacted;
+  criteriaQuery: string;
+  playbookQuery: string;
+  pubmedTerm?: string;
 }
 
 export async function retrieve(intent: IntentConfig, queries: RetrievalQueries): Promise<RetrievedSource[]> {

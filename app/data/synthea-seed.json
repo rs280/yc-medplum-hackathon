@@ -40,7 +40,14 @@
         "procedure": "General examination of patient (procedure)",
         "payer": "Medicare"
       }
-    ]
+    ],
+    "vitals": {
+      "heightCm": 163,
+      "weightKg": 71.2,
+      "systolic": 134,
+      "diastolic": 84,
+      "heartRate": 78
+    }
   },
   {
     "syntheaId": "958988d0-ad72-fe02-722e-f81e0e2cbf47",
@@ -83,7 +90,14 @@
         "procedure": "Encounter for symptom (procedure)",
         "payer": "Humana"
       }
-    ]
+    ],
+    "vitals": {
+      "heightCm": 170,
+      "weightKg": 64.5,
+      "systolic": 118,
+      "diastolic": 76,
+      "heartRate": 68
+    }
   },
   {
     "syntheaId": "73b97ede-ebda-6de2-36c8-c7c6cc9ad9ff",
@@ -126,7 +140,14 @@
         "procedure": "General examination of patient (procedure)",
         "payer": "Medicaid"
       }
-    ]
+    ],
+    "vitals": {
+      "heightCm": 178,
+      "weightKg": 88.9,
+      "systolic": 126,
+      "diastolic": 80,
+      "heartRate": 72
+    }
   },
   {
     "syntheaId": "139cd667-593c-c80f-ece7-7561016c43db",
@@ -169,7 +190,14 @@
         "procedure": "Well child visit (procedure)",
         "payer": "UnitedHealthcare"
       }
-    ]
+    ],
+    "vitals": {
+      "heightCm": 74,
+      "weightKg": 9.1,
+      "systolic": 90,
+      "diastolic": 56,
+      "heartRate": 120
+    }
   },
   {
     "syntheaId": "4856d816-b2ac-e1b6-5ace-4eafd4a8e86e",
@@ -212,7 +240,14 @@
         "procedure": "Encounter for problem (procedure)",
         "payer": "Blue Cross Blue Shield"
       }
-    ]
+    ],
+    "vitals": {
+      "heightCm": 175,
+      "weightKg": 79.4,
+      "systolic": 122,
+      "diastolic": 78,
+      "heartRate": 70
+    }
   },
   {
     "syntheaId": "4c756282-9faf-4e7b-1689-3e3a3cb39537",
@@ -255,6 +290,13 @@
         "procedure": "Well child visit (procedure)",
         "payer": "NO_INSURANCE"
       }
-    ]
+    ],
+    "vitals": {
+      "heightCm": 132,
+      "weightKg": 30.4,
+      "systolic": 102,
+      "diastolic": 64,
+      "heartRate": 88
+    }
   }
 ]

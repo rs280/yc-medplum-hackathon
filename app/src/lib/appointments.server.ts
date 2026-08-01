@@ -145,6 +145,16 @@ export function formatSlot(startIso?: string, endIso?: string): string {
   return `${day}, ${start} – ${fmtPart(endIso, { hour: 'numeric', minute: '2-digit' })}`;
 }
 
+/** The same slot split in two, for surfaces that lay the day and the time out separately. */
+export function formatSlotParts(startIso?: string, endIso?: string): { dayLabel: string; timeLabel: string } {
+  if (!startIso) return { dayLabel: 'Unscheduled', timeLabel: '' };
+  const start = fmtPart(startIso, { hour: 'numeric', minute: '2-digit' });
+  return {
+    dayLabel: fmtPart(startIso, { month: 'short', day: 'numeric' }),
+    timeLabel: endIso ? `${start} – ${fmtPart(endIso, { hour: 'numeric', minute: '2-digit' })}` : start,
+  };
+}
+
 /** One line per candidate with its handle — the disambiguation text for a model or a user. */
 export function describeCandidates(candidates: CalendarAppointment[]): string {
   return candidates
@@ -203,8 +213,14 @@ export async function listCalendar(
   if (!opts.includeCancelled) rows = rows.filter((r) => r.status !== 'cancelled');
   if (opts.patientId) rows = rows.filter((r) => r.patientId === opts.patientId);
   if (opts.patientName) {
-    const q = opts.patientName.trim().toLowerCase();
-    rows = rows.filter((r) => r.patientName.toLowerCase().includes(q));
+    // Every word must appear, rather than the whole string appearing
+    // contiguously: "Jane Doe" has to find "Jane Q Doe", and a contiguous
+    // match reported her as having no appointments at all.
+    const words = opts.patientName.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    rows = rows.filter((r) => {
+      const name = r.patientName.toLowerCase();
+      return words.every((word) => name.includes(word));
+    });
   }
   // A window excludes unscheduled rows by definition — they belong to no day.
   if (opts.fromIso) rows = rows.filter((r) => r.start !== undefined && r.start >= opts.fromIso!);
