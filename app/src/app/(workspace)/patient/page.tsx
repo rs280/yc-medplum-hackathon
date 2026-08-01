@@ -106,16 +106,6 @@ export default async function PatientViewPage({
           <div className="phone-bar" />
         </div>
 
-        <div className="patient-view-side">
-          <div className="card">
-            <h2>Try it live</h2>
-            <p className="empty">
-              From the Dashboard, tell the copilot <em>&ldquo;run discharge outreach&rdquo;</em> or <em>&ldquo;the
-              payer approved claim 1&rdquo;</em> — then flip back here and watch a new card appear on the phone. And
-              tap <em>Ask us anything</em> on the phone to talk to the clinic the way {firstName} would.
-            </p>
-          </div>
-        </div>
       </div>
     </>
   );
