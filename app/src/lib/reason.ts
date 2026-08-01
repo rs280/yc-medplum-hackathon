@@ -237,7 +237,7 @@ export async function reason(
   if (client) {
     try {
       const response = await client.messages.create({
-        model: process.env.ANTHROPIC_MODEL || 'claude-opus-5',
+        model: process.env.ANTHROPIC_MODEL || 'claude-opus-4-8',
         max_tokens: 8000,
         system: `${intent.systemPrompt}\n${GLOBAL_RULES}`,
         output_config: {
