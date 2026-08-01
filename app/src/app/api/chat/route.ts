@@ -1,12 +1,15 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import type Anthropic from '@anthropic-ai/sdk';
-import { COPILOT_SYSTEM_PROMPT } from '@/lib/copilotPrompt';
+import { copilotSystemPrompt } from '@/lib/copilotPrompt';
 import { getLlmClient, resolveChatModel } from '@/lib/llmClient';
 import {
+  bookAppointment,
+  completeVisit,
   DENIAL_TEXTS,
   fireEvent,
   latestArtifact,
   recentRuns,
+  registerPatient,
   statusSnapshot,
   type CopilotEvent,
 } from '@/lib/copilot.server';
@@ -53,6 +56,52 @@ const TOOLS: Anthropic.Tool[] = [
     input_schema: {
       type: 'object',
       properties: { runId: { type: 'string', description: 'Optional run id (prefix ok)' } },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'register_patient',
+    description:
+      'Front desk: register a brand-new patient and verify their insurance eligibility (270/271). Creates the medical record and coverage. Requires at least a name and an insurance company.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Full name, e.g. "Jordan Lee"' },
+        birthDate: { type: 'string', description: 'YYYY-MM-DD if given' },
+        phone: { type: 'string' },
+        payer: { type: 'string', description: 'Insurance company, e.g. Aetna, Blue Shield PPO, Medicare' },
+        memberId: { type: 'string', description: 'Insurance member ID if given' },
+      },
+      required: ['name', 'payer'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'book_appointment',
+    description: 'Front desk: book a visit for a registered patient. Compute startIso from the user’s words and today’s date; omit it for tomorrow 10:00.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        patientName: { type: 'string' },
+        description: { type: 'string', description: 'e.g. "New patient check-up"' },
+        startIso: { type: 'string', description: 'ISO 8601 start time' },
+      },
+      required: ['patientName'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'complete_visit',
+    description:
+      'Front desk checkout: end the patient’s visit. Marks their appointment fulfilled, records the finished encounter (which fires the discharge agent: post-visit outreach + follow-up booking through the full pipeline), and drafts the visit claim. Returns the claim identifier — always tell the user and reuse it for later run_agent calls on their claim.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        patientName: { type: 'string' },
+        procedure: { type: 'string', description: 'What the visit was, e.g. "Office visit — annual physical"' },
+        amount: { type: 'number', description: 'Billed amount in USD (default 180)' },
+      },
+      required: ['patientName'],
       additionalProperties: false,
     },
   },
@@ -110,6 +159,35 @@ async function executeTool(
         detail: artifact ? `${artifact.agent}${artifact.denialCode ? ` · ${artifact.denialCode}` : ''}` : 'none found',
       };
     }
+    case 'register_patient': {
+      const r = await registerPatient({
+        name: String(input.name),
+        birthDate: typeof input.birthDate === 'string' ? input.birthDate : undefined,
+        phone: typeof input.phone === 'string' ? input.phone : undefined,
+        payer: String(input.payer),
+        memberId: typeof input.memberId === 'string' ? input.memberId : undefined,
+      });
+      return { result: r.summary, refresh: true, detail: r.summary };
+    }
+    case 'book_appointment': {
+      const r = await bookAppointment({
+        patientName: String(input.patientName),
+        description: typeof input.description === 'string' ? input.description : undefined,
+        startIso: typeof input.startIso === 'string' ? input.startIso : undefined,
+      });
+      return { result: r.summary, refresh: true, detail: r.summary };
+    }
+    case 'complete_visit': {
+      const r = await completeVisit(
+        {
+          patientName: String(input.patientName),
+          procedure: typeof input.procedure === 'string' ? input.procedure : undefined,
+          amount: typeof input.amount === 'number' ? input.amount : undefined,
+        },
+        onPipelineStep,
+      );
+      return { result: r.summary, refresh: true, detail: r.summary };
+    }
     case 'run_agent': {
       const event = input.event as CopilotEvent;
       const fired = await fireEvent(
@@ -138,7 +216,7 @@ async function agentLoop(client: Anthropic, history: ChatMessage[], model: strin
       model,
       max_tokens: 2000,
       output_config: { effort: 'low' },
-      system: COPILOT_SYSTEM_PROMPT,
+      system: copilotSystemPrompt(),
       tools: TOOLS,
       messages,
     });
@@ -167,7 +245,7 @@ async function agentLoop(client: Anthropic, history: ChatMessage[], model: strin
       emit({ type: 'tool', id, name: block.name, summary, status: 'running' });
       try {
         const onPipelineStep =
-          block.name === 'run_agent'
+          block.name === 'run_agent' || block.name === 'complete_visit'
             ? (pe: PipelineStepEvent) => emit({ type: 'pipeline', toolId: id, step: pe.step, detail: pe.detail, data: pe.data })
             : undefined;
         const { result, refresh, detail } = await executeTool(block.name, input, onPipelineStep);

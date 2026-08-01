@@ -1,6 +1,7 @@
 import 'server-only';
-import type { Claim, ClaimResponse, Coverage, Encounter, Patient, ServiceRequest } from '@medplum/fhirtypes';
-import { getStore, type FhirStore } from './medplum.server';
+import type { Appointment, Claim, ClaimResponse, Coverage, Encounter, Patient, ServiceRequest } from '@medplum/fhirtypes';
+import { getStore, writeAudit, type FhirStore } from './medplum.server';
+import { checkEligibility } from './stedi.server';
 import { listEpisodic } from './memory/episodic';
 import { avgTurnaroundMs, loadPlaybook } from './memory/playbook';
 import { mossMode } from './moss.server';
@@ -160,6 +161,169 @@ export async function fireEvent(
       return { summary: `MRI lumbar prior-auth request → ${pipeline.status}: ${pipeline.detail ?? ''}`, pipeline };
     }
   }
+}
+
+// ── Front-desk actions (AI intake → booking → checkout) ─────────────────────
+
+function fullNameOf(p: Patient): string {
+  const n = p.name?.[0];
+  return [n?.given?.join(' '), n?.family].filter(Boolean).join(' ');
+}
+
+async function findPatientByName(store: FhirStore, name: string): Promise<Patient | undefined> {
+  const patients = await store.search<Patient>('Patient', {});
+  const q = name.trim().toLowerCase();
+  return (
+    patients.find((p) => fullNameOf(p).toLowerCase() === q) ??
+    patients.find((p) => fullNameOf(p).toLowerCase().includes(q) || q.includes(fullNameOf(p).toLowerCase()))
+  );
+}
+
+function shortId(): string {
+  return Date.now().toString(36).toUpperCase().slice(-6);
+}
+
+/**
+ * AI intake: the copilot collects name/DOB/insurance conversationally, then
+ * calls this — creates the Patient + Coverage and verifies eligibility via
+ * the Stedi 270/271 path, exactly like a front-desk registration.
+ */
+export async function registerPatient(opts: {
+  name: string;
+  birthDate?: string;
+  phone?: string;
+  payer: string;
+  memberId?: string;
+}): Promise<{ summary: string; mrn: string }> {
+  const store = await getStore();
+  const existing = await findPatientByName(store, opts.name);
+  if (existing) {
+    const mrn = existing.identifier?.[0]?.value ?? existing.id!;
+    return { summary: `${fullNameOf(existing)} is already registered (MRN ${mrn}).`, mrn };
+  }
+
+  const parts = opts.name.trim().split(/\s+/);
+  const family = parts.length > 1 ? parts[parts.length - 1] : undefined;
+  const given = parts.length > 1 ? parts.slice(0, -1) : parts;
+  const mrn = `MRN-NEW-${shortId()}`;
+
+  const patient = await store.create<Patient>({
+    resourceType: 'Patient',
+    identifier: [{ system: IDS, value: mrn }],
+    name: [{ given, family }],
+    birthDate: opts.birthDate,
+    telecom: opts.phone ? [{ system: 'phone', value: opts.phone, use: 'mobile' }] : undefined,
+  });
+  await store.create<Coverage>({
+    resourceType: 'Coverage',
+    identifier: [{ system: IDS, value: `COV-${mrn}` }],
+    status: 'active',
+    beneficiary: { reference: `Patient/${patient.id}` },
+    subscriberId: opts.memberId,
+    payor: [{ display: opts.payer }],
+  });
+  const elig = await checkEligibility(opts.payer);
+  await writeAudit(store, {
+    subtype: 'intake',
+    description: `New patient registered via copilot; eligibility 270/271 → plan ${elig.planStatus}, prior-auth indicator ${elig.authOrCertIndicator}${elig.simulated ? ' (simulated)' : ''}`,
+    entities: [`Patient/${patient.id}`],
+  });
+  return {
+    summary:
+      `Registered ${opts.name} (MRN ${mrn}) with ${opts.payer}${opts.memberId ? ` member ${opts.memberId}` : ''}. ` +
+      `Eligibility check: plan ${elig.planStatus}; prior authorization ${elig.authOrCertIndicator === 'Y' ? 'REQUIRED for imaging — the triage agent will catch this' : 'not indicated'}.`,
+    mrn,
+  };
+}
+
+/** AI scheduling: books an Appointment for a registered patient. */
+export async function bookAppointment(opts: {
+  patientName: string;
+  description?: string;
+  startIso?: string;
+}): Promise<{ summary: string }> {
+  const store = await getStore();
+  const patient = await findPatientByName(store, opts.patientName);
+  if (!patient) throw new Error(`No patient named '${opts.patientName}' — register them first`);
+  let start = opts.startIso ? new Date(opts.startIso) : new Date(NaN);
+  if (isNaN(start.getTime())) {
+    start = new Date();
+    start.setDate(start.getDate() + 1);
+    start.setHours(10, 0, 0, 0);
+  }
+  const end = new Date(start.getTime() + 30 * 60_000);
+  const appt = await store.create<Appointment>({
+    resourceType: 'Appointment',
+    status: 'booked',
+    description: opts.description ?? 'New patient check-up',
+    start: start.toISOString(),
+    end: end.toISOString(),
+    participant: [{ actor: { reference: `Patient/${patient.id}`, display: fullNameOf(patient) }, status: 'accepted' }],
+  });
+  return {
+    summary: `Booked "${appt.description}" for ${fullNameOf(patient)} on ${start.toLocaleString(undefined, { weekday: 'long', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}.`,
+  };
+}
+
+/**
+ * AI checkout: ends the visit. Marks the booked appointment fulfilled, writes
+ * the finished Encounter (which is the REAL trigger the discharge agent
+ * subscribes to — post-visit outreach fires through the full pipeline), and
+ * drafts the visit claim so the insurance story can continue on this patient.
+ */
+export async function completeVisit(
+  opts: { patientName: string; procedure?: string; amount?: number },
+  onStep?: (event: PipelineStepEvent) => void,
+): Promise<{ summary: string; claimIdentifier: string; pipeline?: PipelineResult }> {
+  const store = await getStore();
+  const patient = await findPatientByName(store, opts.patientName);
+  if (!patient) throw new Error(`No patient named '${opts.patientName}' — register them first`);
+  const patientRef = { reference: `Patient/${patient.id}` };
+  const procedure = opts.procedure ?? 'Office visit — new patient check-up';
+
+  const appts = await store.search<Appointment>('Appointment', {});
+  const booked = appts.find(
+    (a) => a.status === 'booked' && a.participant?.some((p) => p.actor?.reference === patientRef.reference),
+  );
+  if (booked) await store.update<Appointment>({ ...booked, status: 'fulfilled' });
+
+  const suffix = shortId();
+  const now = new Date();
+  const encounter = await store.create<Encounter>({
+    resourceType: 'Encounter',
+    identifier: [{ system: IDS, value: `VISIT-${suffix}` }],
+    status: 'finished',
+    class: { code: 'AMB', display: 'ambulatory' },
+    type: [{ text: procedure }],
+    subject: patientRef,
+    period: { start: new Date(now.getTime() - 30 * 60_000).toISOString(), end: now.toISOString() },
+  });
+
+  const claimIdentifier = `VISIT-CLM-${suffix}`;
+  const coverage = (await store.search<Coverage>('Coverage', { beneficiary: patientRef.reference }))[0];
+  await store.create<Claim>({
+    resourceType: 'Claim',
+    identifier: [{ system: IDS, value: claimIdentifier }],
+    status: 'draft',
+    type: { coding: [{ system: 'http://terminology.hl7.org/CodeSystem/claim-type', code: 'professional' }] },
+    use: 'claim',
+    patient: patientRef,
+    created: now.toISOString(),
+    provider: { display: 'Lakeside Family Clinic' },
+    priority: { coding: [{ code: 'normal' }] },
+    insurance: [{ sequence: 1, focal: true, coverage: { display: coverage?.payor?.[0]?.display ?? 'Self-pay' } }],
+    item: [{ sequence: 1, productOrService: { text: procedure } }],
+    total: { value: opts.amount ?? 180, currency: 'USD' },
+  });
+
+  const pipeline = await runPipeline(encounter, onStep);
+  return {
+    summary:
+      `Visit complete for ${fullNameOf(patient)}. Discharge outreach ${pipeline.status}: ${pipeline.detail ?? ''}. ` +
+      `Visit claim ${claimIdentifier} ($${opts.amount ?? 180}) drafted and sitting in Ready.`,
+    claimIdentifier,
+    pipeline,
+  };
 }
 
 /** Aggregate, PHI-free snapshot of the whole back office for the copilot. */
