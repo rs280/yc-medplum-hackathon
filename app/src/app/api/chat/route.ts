@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import type Anthropic from '@anthropic-ai/sdk';
-import { copilotSystemPrompt } from '@/lib/copilotPrompt';
+import { copilotSystemPrompt, patientCopilotSystemPrompt } from '@/lib/copilotPrompt';
+import { patientPortal } from '@/lib/workspace.server';
 import { getLlmClient, resolveChatModel } from '@/lib/llmClient';
 import {
   bookAppointment,
@@ -324,6 +325,83 @@ async function agentLoop(client: Anthropic, history: ChatMessage[], model: strin
   emit({ type: 'text', text: 'Stopping here — that took more steps than expected. Ask me to continue if needed.' });
 }
 
+// ── Patient persona (in-phone copilot on /patient) ──────────────────────────
+
+/** Feed lines + first name for the patient persona, from the same portal data the phone renders. */
+async function patientContext(patientId?: string): Promise<{ firstName: string; feedLines: string[] }> {
+  const { patient, items } = await patientPortal(patientId);
+  return {
+    firstName: patient?.name.split(' ')[0] ?? 'there',
+    feedLines: items.map((i) => `- [${new Date(i.at).toDateString()}] ${i.title}${i.body ? ` — ${i.body}` : ''}`),
+  };
+}
+
+/** The only staff tools the patient persona may use — self-service registration and booking. */
+const PATIENT_TOOLS = TOOLS.filter((t) => t.name === 'register_patient' || t.name === 'book_appointment');
+
+/** Chat loop for the patient: answers from their own feed; can register themselves and book visits. */
+async function patientLoop(
+  client: Anthropic,
+  history: ChatMessage[],
+  model: string,
+  emit: Emit,
+  patientId?: string,
+): Promise<void> {
+  const { firstName, feedLines } = await patientContext(patientId);
+  const messages: Anthropic.MessageParam[] = history.map((m) => ({ role: m.role, content: m.content }));
+  let stepId = 0;
+
+  for (let turn = 0; turn < 4; turn++) {
+    const response = await client.messages.create({
+      model,
+      max_tokens: 1200,
+      output_config: { effort: 'low' },
+      system: patientCopilotSystemPrompt(firstName, feedLines),
+      tools: PATIENT_TOOLS,
+      messages,
+    });
+    if (response.stop_reason === 'refusal') {
+      emit({ type: 'text', text: 'I can’t help with that — please call the clinic and they’ll sort you out.' });
+      return;
+    }
+    for (const block of response.content) {
+      if (block.type === 'text' && block.text.trim()) emit({ type: 'text', text: block.text });
+    }
+    if (response.stop_reason !== 'tool_use') return;
+
+    messages.push({ role: 'assistant', content: response.content });
+    const toolResults: Anthropic.ToolResultBlockParam[] = [];
+    for (const block of response.content) {
+      if (block.type !== 'tool_use') continue;
+      const id = `p${++stepId}`;
+      const summary = block.name === 'register_patient' ? 'signing you up' : 'booking your visit';
+      emit({ type: 'tool', id, name: block.name, summary, status: 'running' });
+      try {
+        const { result, refresh, detail } = await executeTool(block.name, (block.input ?? {}) as Record<string, unknown>);
+        emit({ type: 'tool', id, name: block.name, summary, status: 'done', detail, refresh });
+        toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: result });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        emit({ type: 'tool', id, name: block.name, summary, status: 'error', detail: message });
+        toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: `Error: ${message}`, is_error: true });
+      }
+    }
+    messages.push({ role: 'user', content: toolResults });
+  }
+}
+
+/** No-LLM fallback for the patient persona: read the feed back in plain words. */
+async function patientFallback(emit: Emit, patientId?: string): Promise<void> {
+  const { firstName, feedLines } = await patientContext(patientId);
+  emit({
+    type: 'text',
+    text:
+      feedLines.length > 0
+        ? `Hi ${firstName}! Here’s the latest on your care: ${feedLines.slice(0, 3).map((l) => l.replace(/^- \[[^\]]*\] /, '')).join(' · ')}. Anything else, just call the clinic.`
+        : `Hi ${firstName}! Nothing new on your care feed yet. If you have questions, the clinic is a call away.`,
+  });
+}
+
 // ── Keyword fallback (no API key) ───────────────────────────────────────────
 
 function fmtDur(ms: number | null): string {
@@ -399,6 +477,8 @@ interface ChatRequest {
   messages?: ChatMessage[];
   model?: string;
   attachment?: { mediaType?: string; base64?: string };
+  persona?: string;
+  patientId?: string;
 }
 
 /** Validate an uploaded image at the boundary; anything malformed is dropped, not trusted. */
@@ -420,6 +500,8 @@ export async function POST(req: NextRequest): Promise<Response> {
   if (history.length === 0) return NextResponse.json({ error: 'messages required' }, { status: 400 });
   const model = resolveChatModel(typeof body.model === 'string' ? body.model : undefined);
   const attachment = parseAttachment(body.attachment);
+  const isPatient = body.persona === 'patient';
+  const patientId = typeof body.patientId === 'string' ? body.patientId : undefined;
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
@@ -432,7 +514,18 @@ export async function POST(req: NextRequest): Promise<Response> {
           const last = history[history.length - 1];
           if (note && last) last.content = `${last.content}\n\n${note}`.trim();
         }
-        if (client) {
+        if (isPatient) {
+          if (client) {
+            try {
+              await patientLoop(client, history, model, emit, patientId);
+            } catch (err) {
+              console.warn('[chat] patient loop failed — falling back:', err);
+              await patientFallback(emit, patientId);
+            }
+          } else {
+            await patientFallback(emit, patientId);
+          }
+        } else if (client) {
           try {
             await agentLoop(client, history, model, emit);
           } catch (err) {

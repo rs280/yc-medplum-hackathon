@@ -2,6 +2,7 @@ import { CalendarCheck, HeartPulse, MessageCircle, ShieldCheck, Signal, Wallet, 
 import Link from 'next/link';
 import { patientPortal, type PortalItem } from '@/lib/workspace.server';
 import { Stagger } from '@/components/anim';
+import { PatientChat } from '@/components/PatientChat';
 
 export const dynamic = 'force-dynamic';
 
@@ -101,6 +102,7 @@ export default async function PatientViewPage({
               </Stagger>
             )}
           </div>
+          <PatientChat patientId={patient?.id} firstName={firstName} />
           <div className="phone-bar" />
         </div>
 
@@ -125,9 +127,9 @@ export default async function PatientViewPage({
           <div className="card">
             <h2>Try it live</h2>
             <p className="empty">
-              Tell the copilot <em>&ldquo;run discharge outreach&rdquo;</em> or <em>&ldquo;the payer approved claim
-              1&rdquo;</em> — then watch a new card appear on the phone. Same system, two audiences: staff see the
-              work, {firstName} sees the outcome.
+              From the Dashboard, tell the copilot <em>&ldquo;run discharge outreach&rdquo;</em> or <em>&ldquo;the
+              payer approved claim 1&rdquo;</em> — then flip back here and watch a new card appear on the phone. And
+              tap <em>Ask us anything</em> on the phone to talk to the clinic the way {firstName} would.
             </p>
           </div>
         </div>

@@ -23,7 +23,7 @@ import {
   X,
   Zap,
 } from 'lucide-react';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { renderRedacted } from '@/components/Redacted';
 import { drawRedactedImage, loadAttachment, type ImageAttachment, type PhiBox } from '@/lib/chatImage';
@@ -240,6 +240,7 @@ interface CopilotProps {
 
 export function Copilot({ models, defaultModel }: CopilotProps) {
   const router = useRouter();
+  const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
   const [model, setModel] = useState(defaultModel);
   const [messages, setMessages] = useState<Msg[]>([]);
@@ -446,6 +447,10 @@ export function Copilot({ models, defaultModel }: CopilotProps) {
     setInput('');
     recognition.start();
   }, [listening, send]);
+
+  // The patient-view page has its own in-phone patient copilot; the staff
+  // panel would break the "what the patient sees" illusion there.
+  if (pathname === '/patient') return null;
 
   if (collapsed) {
     return (

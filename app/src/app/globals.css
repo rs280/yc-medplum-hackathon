@@ -1752,6 +1752,130 @@ tbody tr:hover {
   margin-top: 6px;
   font-variant-numeric: tabular-nums;
 }
+.phone-chat-fab {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  margin: 0;
+  padding: 10px;
+  border: none;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--accent-strong);
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.phone-chat {
+  display: flex;
+  flex-direction: column;
+  height: 55%;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+}
+.phone-chat-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ink);
+  border-bottom: 1px solid var(--border);
+}
+.phone-chat-log {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.phone-chat-empty {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+  text-align: center;
+  padding: 10px 4px;
+}
+.phone-chat-suggestions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+}
+.phone-chat-suggestions button {
+  border: 1px solid var(--border);
+  background: var(--track);
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 11.5px;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.phone-msg {
+  max-width: 85%;
+  padding: 7px 10px;
+  border-radius: 13px;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.phone-msg.user {
+  align-self: flex-end;
+  background: var(--accent-strong);
+  color: #fff;
+  border-bottom-right-radius: 4px;
+}
+.phone-msg.assistant {
+  align-self: flex-start;
+  background: var(--track);
+  color: var(--ink);
+  border-bottom-left-radius: 4px;
+}
+.phone-msg.typing {
+  color: var(--muted);
+}
+.phone-msg.status {
+  align-self: center;
+  background: none;
+  color: var(--muted);
+  font-size: 11px;
+  font-style: italic;
+  padding: 0;
+}
+.phone-chat-input {
+  display: flex;
+  gap: 7px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--border);
+}
+.phone-chat-input input {
+  flex: 1;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 7px 12px;
+  font-size: 12px;
+  background: var(--page);
+  color: var(--ink);
+}
+.phone-chat-input button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: 50%;
+  background: var(--accent-strong);
+  color: #fff;
+  cursor: pointer;
+}
+.phone-chat-input button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
 .phone-bar {
   height: 22px;
   background: var(--surface);
