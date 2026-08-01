@@ -216,7 +216,7 @@ export async function patientTimeline(patientId: string): Promise<TimelineEvent[
 
 // ── Claims board ────────────────────────────────────────────────────────────
 
-export type ClaimStage = 'ready' | 'submitted' | 'denied' | 'appealed' | 'paid';
+export type ClaimStage = 'ready' | 'submitted' | 'denied' | 'needs-review' | 'appealed' | 'paid';
 
 export interface ClaimCard {
   id: string;
@@ -261,13 +261,17 @@ export async function claimsBoard(): Promise<ClaimCard[]> {
         const d = parseDenial(latest);
         denialCode = d.code;
         denialLabel = d.label;
-        const appealed = tasks.some(
+        const appealTasks = tasks.filter(
           (t) =>
             t.focus?.reference === `ClaimResponse/${latest.id}` &&
-            t.code?.coding?.some((c) => c.code === 'denial-appeal') &&
-            t.status === 'completed',
+            t.code?.coding?.some((c) => c.code === 'denial-appeal'),
         );
-        stage = appealed ? 'appealed' : 'denied';
+        // 'requested' = draft parked for human sign-off; 'completed' = appeal sent.
+        stage = appealTasks.some((t) => t.status === 'completed')
+          ? 'appealed'
+          : appealTasks.some((t) => t.status === 'requested')
+            ? 'needs-review'
+            : 'denied';
       }
     }
 
@@ -398,7 +402,7 @@ async function portalItemsFor(patient: PatientSummary): Promise<PortalItem[]> {
         title: 'Good news about your insurance',
         body: `${c.payer} approved your ${c.procedure ?? 'claim'}${c.amount != null ? ` ($${c.amount.toLocaleString()})` : ''}. Your balance for this visit is $0.`,
       });
-    } else if (c.stage === 'denied' || c.stage === 'appealed') {
+    } else if (c.stage === 'denied' || c.stage === 'needs-review' || c.stage === 'appealed') {
       items.push({
         at: c.updatedAt,
         kind: 'insurance_fight',

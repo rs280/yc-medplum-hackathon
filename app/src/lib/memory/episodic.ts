@@ -32,7 +32,7 @@ export interface EpisodicRecord {
   actionsTaken: string[];
   gapsClosed?: number;
   engine: 'anthropic' | 'template';
-  outcome: 'pending' | 'won' | 'lost' | 'closed' | 'failed';
+  outcome: 'pending' | 'won' | 'lost' | 'closed' | 'failed' | 'rejected';
   redactionCount: number;
   latencyMs: number;
   createdAt: string;

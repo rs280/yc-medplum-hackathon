@@ -15,6 +15,7 @@ const STAGES: Array<{ stage: ClaimStage; label: string; hint: string }> = [
   { stage: 'ready', label: 'Ready', hint: 'awaiting triage' },
   { stage: 'submitted', label: 'Submitted', hint: 'with the payer' },
   { stage: 'denied', label: 'Denied', hint: 'agent will appeal' },
+  { stage: 'needs-review', label: 'Needs Review', hint: 'draft awaiting your approval' },
   { stage: 'appealed', label: 'Appealed', hint: 'decision pending' },
   { stage: 'paid', label: 'Paid', hint: 'won / reprocessed' },
 ];

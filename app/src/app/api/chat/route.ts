@@ -30,6 +30,7 @@ import {
   readPatientDocument,
   type AttachedImage,
 } from '@/lib/documentRedaction.server';
+import { approveDraft, listPending, rejectDraft } from '@/lib/approvals.server';
 import type { PipelineStepEvent } from '@/lib/pipeline';
 
 export const maxDuration = 300;
@@ -212,6 +213,37 @@ const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name: 'list_pending_approvals',
+    description:
+      'Drafts waiting for human sign-off (appeal letters the agent paused before sending). Call for "what needs my review", "pending approvals", "anything waiting on me".',
+    input_schema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
+    name: 'approve_draft',
+    description:
+      'Approve and SEND the appeal draft awaiting review — this is the clinic approving its own outgoing letter, NOT the payer approving a claim (that is run_agent with event approve). Optional runId (defaults to the newest pending draft). Optional editedLetter to send a revised letter — keep the [NAME_1]-style tokens exactly as shown in the draft.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        runId: { type: 'string', description: 'Run id of the pending draft (prefix ok); omit for the newest' },
+        editedLetter: { type: 'string', description: 'Full revised letter text with redaction tokens preserved' },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'reject_draft',
+    description: 'Discard the pending appeal draft without sending anything to the payer. Optional runId and reason.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        runId: { type: 'string', description: 'Run id of the pending draft (prefix ok); omit for the newest' },
+        reason: { type: 'string', description: 'Why, in the reviewer’s words' },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'run_agent',
     description:
       'Fire a real pipeline event. "deny" simulates a payer denial (wakes the appeal agent), "approve" records the payer approving a claim after appeal (marks the appeal WON and updates the learned playbook), "triage" runs pre-submission gap check on a claim, "discharge" runs post-discharge patient outreach + care-gap closure, "prior-auth" compiles an authorization packet for the pending MRI order.',
@@ -362,6 +394,31 @@ async function executeTool(
       );
       return { result: fired.summary, refresh: true, detail: fired.summary };
     }
+    case 'list_pending_approvals': {
+      const drafts = listPending();
+      return {
+        result: drafts.length ? JSON.stringify(drafts) : 'Nothing is awaiting approval.',
+        refresh: false,
+        detail: `${drafts.length} draft(s) awaiting approval`,
+      };
+    }
+    case 'approve_draft': {
+      const r = await approveDraft(
+        {
+          runId: typeof input.runId === 'string' ? input.runId : undefined,
+          editedLetter: typeof input.editedLetter === 'string' ? input.editedLetter : undefined,
+        },
+        onPipelineStep,
+      );
+      return { result: r.summary, refresh: true, detail: r.summary };
+    }
+    case 'reject_draft': {
+      const r = await rejectDraft({
+        runId: typeof input.runId === 'string' ? input.runId : undefined,
+        reason: typeof input.reason === 'string' ? input.reason : undefined,
+      });
+      return { result: r.summary, refresh: true, detail: r.summary };
+    }
     default:
       return { result: `Unknown tool ${name}`, refresh: false, detail: 'unknown tool' };
   }
@@ -450,7 +507,7 @@ async function agentLoop(client: Anthropic, history: ChatMessage[], model: strin
       emit({ type: 'tool', id, name: block.name, summary, status: 'running' });
       try {
         const onPipelineStep =
-          block.name === 'run_agent' || block.name === 'complete_visit' || block.name === 'order_scan'
+          block.name === 'run_agent' || block.name === 'complete_visit' || block.name === 'order_scan' || block.name === 'approve_draft'
             ? (pe: PipelineStepEvent) => emit({ type: 'pipeline', toolId: id, step: pe.step, detail: pe.detail, data: pe.data })
             : undefined;
         const { result, refresh, detail } = await executeTool(block.name, input, onPipelineStep);
@@ -669,6 +726,37 @@ async function fallbackChat(history: ChatMessage[], emit: Emit): Promise<void> {
         .join('; ');
       return `${rows.length} visit(s) coming up: ${lines}. Say "cancel APT-XXXX" to call one off.`;
     });
+  }
+
+  // A pending draft owns the approve/reject verbs; with nothing pending, the
+  // old semantics below (approve = payer approval) are untouched.
+  const drafts = listPending();
+  if (drafts.length > 0 && /(reject|discard|scrap|don'?t send|hold off)/.test(text)) {
+    emit({ type: 'tool', id: 'f1', name: 'reject_draft', summary: 'reject the draft', status: 'running' });
+    const r = await rejectDraft({});
+    emit({ type: 'tool', id: 'f1', name: 'reject_draft', summary: 'reject the draft', status: 'done', detail: r.summary, refresh: true });
+    emit({ type: 'text', text: r.summary });
+    return;
+  }
+  if (drafts.length > 0 && /(approve|send it|looks good|ship it|go ahead|sign off)/.test(text)) {
+    emit({ type: 'tool', id: 'f1', name: 'approve_draft', summary: 'approve & send the draft', status: 'running' });
+    const r = await approveDraft({}, (pe) =>
+      emit({ type: 'pipeline', toolId: 'f1', step: pe.step, detail: pe.detail, data: pe.data }),
+    );
+    emit({ type: 'tool', id: 'f1', name: 'approve_draft', summary: 'approve & send the draft', status: 'done', detail: r.summary, refresh: true });
+    emit({ type: 'text', text: r.summary });
+    return;
+  }
+  if (/(needs (my )?review|pending approval|awaiting approval|review queue|waiting on me)/.test(text)) {
+    emit({ type: 'tool', id: 'f1', name: 'list_pending_approvals', summary: 'check the review queue', status: 'running' });
+    emit({ type: 'tool', id: 'f1', name: 'list_pending_approvals', summary: 'check the review queue', status: 'done', detail: `${drafts.length} draft(s)` });
+    emit({
+      type: 'text',
+      text: drafts.length
+        ? `${drafts.length} draft(s) awaiting your sign-off: ${drafts.map((d) => `${d.denialCode ?? 'appeal'} (run ${d.runId.slice(0, 8)})`).join(', ')}. Say "approve the appeal" or "reject the appeal".`
+        : 'Nothing is waiting on you — the review queue is clear.',
+    });
+    return;
   }
 
   if (/(approve|approv|overturn|won|paid)/.test(text)) return runTool('approve', EVENT_LABELS.approve);

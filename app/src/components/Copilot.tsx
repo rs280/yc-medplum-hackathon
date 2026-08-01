@@ -10,6 +10,7 @@ import {
   ChevronRight,
   Crosshair,
   Dot,
+  Hand,
   Lock,
   Mic,
   Paperclip,
@@ -78,6 +79,7 @@ const TRACE_META: Array<{ match: (s: string) => boolean; Icon: typeof Lock; labe
   { match: (s) => s === 'retrieve', Icon: Search, label: 'reading the rules & research' },
   { match: (s) => s === 'reason', Icon: BrainCircuit, label: 'writing the response' },
   { match: (s) => s === 'de-redact', Icon: Unlock, label: 'restoring details' },
+  { match: (s) => s === 'awaiting-approval', Icon: Hand, label: 'waiting for your approval' },
   { match: (s) => s === 'act', Icon: Zap, label: 'sending it' },
   { match: (s) => s === 'learn', Icon: BookOpenCheck, label: 'remembering what worked' },
   { match: (s) => s === 'feedback', Icon: RefreshCcw, label: 'updating the scoreboard' },
@@ -87,7 +89,7 @@ function traceMeta(step: string): { Icon: typeof Lock; label: string } {
   return TRACE_META.find((m) => m.match(step)) ?? { Icon: Dot, label: step };
 }
 
-function TraceEntry({ t }: { t: PipelineTrace }) {
+function TraceEntry({ t, onDecision }: { t: PipelineTrace; onDecision?: (d: 'approve' | 'reject') => void }) {
   const { Icon, label } = traceMeta(t.step);
   const data = t.data ?? {};
   return (
@@ -147,6 +149,16 @@ function TraceEntry({ t }: { t: PipelineTrace }) {
               {a.simulated ? ' (sim)' : ''}
             </span>
           ))}
+        </div>
+      )}
+      {t.step === 'awaiting-approval' && onDecision && (
+        <div className="approval-actions">
+          <button className="suggestion approve" onClick={() => onDecision('approve')}>
+            <Check size={13} aria-hidden /> Approve &amp; send
+          </button>
+          <button className="suggestion reject" onClick={() => onDecision('reject')}>
+            <X size={13} aria-hidden /> Reject
+          </button>
         </div>
       )}
     </div>
@@ -543,7 +555,13 @@ export function Copilot({ models, defaultModel }: CopilotProps) {
                     {s.trace.length > 0 && (
                       <div className="trace">
                         {s.trace.map((t, ti) => (
-                          <TraceEntry key={ti} t={t} />
+                          <TraceEntry
+                            key={ti}
+                            t={t}
+                            onDecision={(d) =>
+                              send(d === 'approve' ? 'Approve the appeal draft and send it.' : 'Reject the appeal draft.')
+                            }
+                          />
                         ))}
                       </div>
                     )}

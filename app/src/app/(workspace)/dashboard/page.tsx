@@ -45,6 +45,7 @@ const BADGES: Record<StoredEpisodic['outcome'], { icon: string; label: string }>
   pending: { icon: '◷', label: 'PENDING' },
   closed: { icon: '✓', label: 'DONE' },
   failed: { icon: '!', label: 'FAILED' },
+  rejected: { icon: '⊘', label: 'REJECTED' },
 };
 
 function Badge({ outcome }: { outcome: StoredEpisodic['outcome'] }) {

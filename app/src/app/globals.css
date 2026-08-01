@@ -1460,7 +1460,7 @@ tbody tr:hover {
 /* ── Claims board (revenue-cycle kanban) ────────────────────────────────── */
 .board {
   display: grid;
-  grid-template-columns: repeat(5, minmax(150px, 1fr));
+  grid-template-columns: repeat(6, minmax(140px, 1fr));
   gap: 10px;
   align-items: start;
 }
@@ -1503,6 +1503,9 @@ tbody tr:hover {
 }
 .board-col.stage-denied {
   border-color: rgba(220, 38, 38, 0.25);
+}
+.board-col.stage-needs-review {
+  border-color: rgba(217, 119, 6, 0.35);
 }
 .board-col.stage-paid {
   border-color: rgba(5, 150, 105, 0.3);
@@ -2298,6 +2301,25 @@ tbody tr:hover {
   color: var(--muted);
   margin-top: 6px;
   font-variant-numeric: tabular-nums;
+}
+.approval-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.approval-actions .suggestion {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 700;
+}
+.approval-actions .suggestion.approve {
+  border-color: var(--good);
+  color: var(--good-text);
+}
+.approval-actions .suggestion.reject {
+  border-color: var(--border);
+  color: var(--muted);
 }
 .phone-chat-fab {
   display: flex;

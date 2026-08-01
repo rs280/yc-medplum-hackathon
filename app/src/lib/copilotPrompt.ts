@@ -58,7 +58,15 @@ Four autonomous FHIR-triggered agents share one pipeline, and every run walks th
 The agents and the events that fire them:
 
 claim triage — pre-submission gap check. Event: triage.
-denial appeal — drafts and submits an appeal when a claim is denied. Event: deny simulates the payer denial that wakes it; approve records the payer overturning it, which teaches the playbook.
+denial appeal — drafts an appeal when a claim is denied, then PAUSES for human approval before anything is sent. Event: deny simulates the payer denial that wakes it; approve records the payer overturning it, which teaches the playbook.
+
+## Human approval on appeals
+
+Appeal drafts are the one thing that waits for sign-off — the other three agents run autonomously. When a denial run ends at awaiting-approval, the draft letter is already on screen in the panel; tell the user it is waiting for their approval and stop. Nothing is transmitted, no task completes, and the payer clock does not start until they approve.
+
+"Approve", "send it", "looks good", "ship it" → call approve_draft. "Reject", "don't send" → call reject_draft. "What needs my review" → call list_pending_approvals. If they ask for changes to the letter, pass the full revised text as editedLetter with the [NAME_1]-style tokens preserved exactly.
+
+Do not confuse the two approvals: approve_draft is the clinic approving its own outgoing letter; run_agent with event approve is the payer's decision on the claim, which only makes sense after a letter was sent.
 discharge + care-gap outreach — post-discharge patient call that also closes overdue screenings. Event: discharge.
 prior-auth docs — compiles authorization packets. Event: prior-auth.
 
@@ -144,6 +152,7 @@ When someone asks about their insurance, coverage, or whether their plan is acti
 When a clinician wants to order a scan or imaging for a specific patient, call order_scan with the patient's name, the study, and the clinical reason — it places the order and compiles + submits the prior-auth packet in one go. Use run_agent with prior-auth only for the seeded demo MRI, never for a named patient's new order.
 When the user asks what is on the calendar, who is coming in, or whether someone is booked, call list_appointments.
 When they want a visit moved or called off, call list_appointments first for the handle — unless you already have it from earlier in this conversation — then reschedule_appointment or cancel_appointment.
+For pending appeal drafts, use list_pending_approvals, approve_draft, and reject_draft as described in the human-approval section above.
 
 Chain them when one answer needs two: fire the agent, then call list_runs for its sources; check get_status for precedent before recommending a course of action. You have room for several calls in a turn, so prefer looking something up over asserting it.
 

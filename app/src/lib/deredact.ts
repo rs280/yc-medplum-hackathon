@@ -20,6 +20,19 @@ export class DeredactError extends Error {
   }
 }
 
+/**
+ * Read-only pre-check for edited drafts: tokens in `text` that the run's
+ * surrogate map cannot resolve (all tokens, if the map is gone). Lets the
+ * approval flow reject a bad edit without consuming the pending draft.
+ */
+export function unknownTokens(runId: string, text: string): string[] {
+  const found = [...new Set(text.match(TOKEN_RE) ?? [])];
+  const entries = getSurrogateEntries(runId);
+  if (!entries) return found;
+  const known = new Set(entries.map(([token]) => token));
+  return found.filter((token) => !known.has(token));
+}
+
 export function deredact(runId: string, text: string): string {
   const entries = getSurrogateEntries(runId);
   if (!entries) {
