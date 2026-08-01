@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { chatModelId, chatModelOptions } from '@/lib/llmClient';
 import { getStore } from '@/lib/medplum.server';
 import { mossMode } from '@/lib/moss.server';
 import { reasonEngine } from '@/lib/reason';
@@ -38,7 +39,7 @@ export default async function WorkspaceLayout({ children }: { children: ReactNod
         </header>
         <div className="shell-body">
           <main className="content">{children}</main>
-          <Copilot />
+          <Copilot models={chatModelOptions()} defaultModel={chatModelId()} />
         </div>
       </div>
     </div>

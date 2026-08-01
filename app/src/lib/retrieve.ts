@@ -13,8 +13,9 @@ import { searchPubMed } from './pubmed.server';
  */
 
 export interface RetrievedSource {
-  id: string; // "MOSS:bsc-mri-brain" | "PMID:31011962"
-  kind: 'moss' | 'pubmed';
+  id: string; // "MOSS:bsc-mri-brain" | "PMID:31011962" | "MEMORY:<runId>"
+  // 'memory' is a prior run of a related case, cited as institutional experience.
+  kind: 'moss' | 'pubmed' | 'memory';
   title: string;
   text: string;
 }

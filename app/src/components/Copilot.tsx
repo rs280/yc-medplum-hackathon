@@ -4,6 +4,10 @@ import {
   ArrowUp,
   BookOpenCheck,
   BrainCircuit,
+  Check,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Crosshair,
   Dot,
   Lock,
@@ -15,12 +19,12 @@ import {
   Unlock,
   Volume2,
   VolumeX,
-  X,
   Zap,
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { renderRedacted } from '@/components/Redacted';
+import type { ChatModelOption } from '@/lib/models';
 
 /**
  * Back-office copilot panel: Cursor-style side chat for clinicians and
@@ -124,15 +128,103 @@ function TraceEntry({ t }: { t: PipelineTrace }) {
   );
 }
 
-export function Copilot() {
+/** Header dropdown for choosing which model the copilot reasons with. */
+function ModelPicker({
+  models,
+  value,
+  onChange,
+  disabled,
+}: {
+  models: ChatModelOption[];
+  value: string;
+  onChange: (id: string) => void;
+  disabled: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const active = models.find((model) => model.id === value);
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (e: MouseEvent) => {
+      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  return (
+    <div className="model-picker" ref={rootRef}>
+      <button
+        className={`model-trigger ${open ? 'open' : ''}`}
+        onClick={() => setOpen((v) => !v)}
+        disabled={disabled}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        title="Choose the model behind the copilot"
+      >
+        <span className="model-orb" />
+        <span className="model-name">{active?.label ?? 'Model'}</span>
+        <ChevronDown size={13} aria-hidden />
+      </button>
+
+      {open && (
+        <div className="model-menu" role="listbox">
+          <div className="model-menu-head">Reasoning model</div>
+          {models.map((model, i) => (
+            <div key={model.id}>
+              {/* The catalog is vendor-ordered, so a change of vendor starts a group. */}
+              {model.vendor !== models[i - 1]?.vendor && <div className="model-group">{model.vendor}</div>}
+              <button
+                className={`model-option ${model.id === value ? 'selected' : ''}`}
+                role="option"
+                aria-selected={model.id === value}
+                title={model.id}
+                onClick={() => {
+                  onChange(model.id);
+                  setOpen(false);
+                }}
+              >
+                <span className="model-option-label">{model.label}</span>
+                <span className="model-option-note">{model.note}</span>
+                {model.id === value && (
+                  <span className="model-option-check">
+                    <Check size={13} aria-hidden />
+                  </span>
+                )}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface CopilotProps {
+  models: ChatModelOption[];
+  defaultModel: string;
+}
+
+export function Copilot({ models, defaultModel }: CopilotProps) {
   const router = useRouter();
-  const [open, setOpen] = useState(true);
+  const [collapsed, setCollapsed] = useState(false);
+  const [model, setModel] = useState(defaultModel);
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [listening, setListening] = useState(false);
   const [voiceReplies, setVoiceReplies] = useState(false);
   const [voiceSupported, setVoiceSupported] = useState(false);
+  const modelRef = useRef(model);
+  modelRef.current = model;
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const logRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<any>(null);
@@ -151,7 +243,7 @@ export function Copilot() {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
-        setOpen(true);
+        setCollapsed(false);
         setTimeout(() => inputRef.current?.focus(), 50);
       }
     };
@@ -195,7 +287,7 @@ export function Copilot() {
         const res = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ messages: history }),
+          body: JSON.stringify({ messages: history, model: modelRef.current }),
         });
         if (!res.ok || !res.body) throw new Error(`copilot request failed (${res.status})`);
 
@@ -290,11 +382,20 @@ export function Copilot() {
     recognition.start();
   }, [listening, send]);
 
-  if (!open) {
+  if (collapsed) {
     return (
-      <button className="copilot-fab" onClick={() => setOpen(true)} title="Open copilot (⌘K)">
-        <Sparkles size={14} aria-hidden /> Copilot
-      </button>
+      <aside className="copilot collapsed">
+        <button className="copilot-rail" onClick={() => setCollapsed(false)} title="Open copilot (⌘K)">
+          <span className="rail-chevron">
+            <ChevronLeft size={16} aria-hidden />
+          </span>
+          <span className="rail-mark">
+            <Sparkles size={14} aria-hidden />
+          </span>
+          <span className="rail-label">COPILOT</span>
+          {busy && <span className="rail-busy" />}
+        </button>
+      </aside>
     );
   }
 
@@ -319,10 +420,27 @@ export function Copilot() {
           >
             {voiceReplies ? <Volume2 size={15} aria-hidden /> : <VolumeX size={15} aria-hidden />}
           </button>
-          <button className="icon-btn" onClick={() => setOpen(false)} title="Collapse" aria-label="Collapse copilot">
-            <X size={15} aria-hidden />
+          <button
+            className="icon-btn"
+            onClick={() => setCollapsed(true)}
+            title="Collapse to the right"
+            aria-label="Collapse copilot"
+          >
+            <ChevronRight size={15} aria-hidden />
           </button>
         </div>
+      </div>
+
+      <div className="copilot-toolbar">
+        {models.length > 0 ? (
+          <ModelPicker models={models} value={model} onChange={setModel} disabled={busy} />
+        ) : (
+          <span className="model-static">keyword router · no LLM key</span>
+        )}
+        <span className={`copilot-state ${busy ? 'working' : ''}`}>
+          <span className="state-dot" />
+          {busy ? 'working' : 'ready'}
+        </span>
       </div>
 
       <div className="copilot-log" ref={logRef}>

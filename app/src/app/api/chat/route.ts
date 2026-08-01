@@ -1,5 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import Anthropic from '@anthropic-ai/sdk';
+import type Anthropic from '@anthropic-ai/sdk';
+import { copilotSystemPrompt } from '@/lib/copilotPrompt';
+import { getLlmClient, resolveChatModel } from '@/lib/llmClient';
 import {
   bookAppointment,
   completeVisit,
@@ -20,8 +22,8 @@ export const maxDuration = 300;
  * staff. Streams NDJSON events ({type:'text'|'tool'|'done'|'error'}) so the
  * UI can render Cursor-style tool steps live. The copilot only ever sees
  * redacted/aggregate data; run_agent drives the real pipeline in-process.
- * Without an ANTHROPIC_API_KEY a keyword-router fallback handles the same
- * commands so the demo never blocks.
+ * Without an LLM key (OPENROUTER_API_KEY or ANTHROPIC_API_KEY) a keyword-router
+ * fallback handles the same commands so the demo never blocks.
  */
 
 interface ChatMessage {
@@ -30,25 +32,6 @@ interface ChatMessage {
 }
 
 type Emit = (event: Record<string, unknown>) => void;
-
-// Function (not const) so "today" is computed per request, not at module load.
-const buildSystem = () => `You are the Back-Office Copilot for a medical clinic, embedded next to the operations dashboard. Your users are clinicians and front-desk staff, often speaking by voice, so answer in short plain sentences — no markdown headers, no tables, no bullet walls. Lead with the outcome.
-
-You sit on top of four autonomous FHIR-triggered agents that share one pipeline (redact PHI → retrieve payer criteria via Moss + PubMed evidence → reason → de-redact → act → learn):
-- claim triage: pre-submission gap check ("triage" event)
-- denial appeal: drafts and submits appeals when a claim is denied ("deny" simulates the payer denial that wakes it; "approve" records the payer overturning it, which teaches the playbook)
-- discharge + care-gap outreach: post-discharge patient call that also closes overdue screenings ("discharge")
-- prior-auth docs: compiles authorization packets ("prior-auth")
-
-You are ALSO the front desk. You can register brand-new patients, book visits, and check patients out:
-- Someone says they're a new patient → collect name + insurance company (birth date, phone, member ID nice to have, don't nag), then call register_patient. Report the eligibility result in plain words.
-- "Book me a check-up" → book_appointment. Compute startIso from their words and today's date (below); default tomorrow 10:00 if vague.
-- Visit over ("check me out", "I just finished my visit") → complete_visit. This fires the real discharge pipeline (post-visit outreach, follow-up booking) AND drafts the visit claim — ALWAYS state the claim identifier it returns, and remember it: when they later say "insurance denied my claim" or "triage my claim", pass that identifier to run_agent via claimIdentifier.
-Never assume someone isn't registered — the store is shared across conversations, so just call the tool with their name; it will say if they're unknown.
-
-Pipeline data is de-identified — placeholder tokens like [NAME_1] stand for real values; never guess at real patient identity. When asked to act on the revenue cycle (appeal, approve, outreach, prior auth, triage), call run_agent. For "how are we doing", get_status / list_runs. get_artifact shows letters. After acting, confirm with concrete numbers. Seeded demo claims: DEMO-CLAIM-1, DEMO-CLAIM-2. Keep replies under ~80 words unless reading an artifact.
-
-Today is ${new Date().toString()}.`;
 
 const TOOLS: Anthropic.Tool[] = [
   {
@@ -224,24 +207,16 @@ async function executeTool(
 
 // ── LLM-driven agent loop ───────────────────────────────────────────────────
 
-const g = globalThis as unknown as { __copilotClient?: Anthropic };
-
-function getClient(): Anthropic | null {
-  if (!process.env.ANTHROPIC_API_KEY) return null;
-  g.__copilotClient ??= new Anthropic({ timeout: 120_000, maxRetries: 1 });
-  return g.__copilotClient;
-}
-
-async function agentLoop(client: Anthropic, history: ChatMessage[], emit: Emit): Promise<void> {
+async function agentLoop(client: Anthropic, history: ChatMessage[], model: string, emit: Emit): Promise<void> {
   const messages: Anthropic.MessageParam[] = history.map((m) => ({ role: m.role, content: m.content }));
   let stepId = 0;
 
   for (let turn = 0; turn < 6; turn++) {
     const response = await client.messages.create({
-      model: process.env.ANTHROPIC_CHAT_MODEL || 'claude-opus-4-8',
+      model,
       max_tokens: 2000,
       output_config: { effort: 'low' },
-      system: buildSystem(),
+      system: copilotSystemPrompt(),
       tools: TOOLS,
       messages,
     });
@@ -359,24 +334,25 @@ async function fallbackChat(history: ChatMessage[], emit: Emit): Promise<void> {
 // ── Route ───────────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest): Promise<Response> {
-  let body: { messages?: ChatMessage[] };
+  let body: { messages?: ChatMessage[]; model?: string };
   try {
-    body = (await req.json()) as { messages?: ChatMessage[] };
+    body = (await req.json()) as { messages?: ChatMessage[]; model?: string };
   } catch {
     return NextResponse.json({ error: 'body is not JSON' }, { status: 400 });
   }
   const history = (body.messages ?? []).filter((m) => m && typeof m.content === 'string').slice(-20);
   if (history.length === 0) return NextResponse.json({ error: 'messages required' }, { status: 400 });
+  const model = resolveChatModel(typeof body.model === 'string' ? body.model : undefined);
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     async start(controller) {
       const emit: Emit = (event) => controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
       try {
-        const client = getClient();
+        const client = getLlmClient();
         if (client) {
           try {
-            await agentLoop(client, history, emit);
+            await agentLoop(client, history, model, emit);
           } catch (err) {
             console.warn('[chat] LLM loop failed — falling back to keyword router:', err);
             await fallbackChat(history, emit);
