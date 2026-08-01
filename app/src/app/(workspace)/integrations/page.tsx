@@ -13,7 +13,7 @@ export const dynamic = 'force-dynamic';
  */
 export default async function IntegrationsPage() {
   const states = await listIntegrationStates();
-  const connected = states.filter((s) => integrationStatus(s.integration, s.enabled, s.configured) === 'connected');
+  const connected = states.filter((s) => integrationStatus(s.enabled) === 'connected');
 
   return (
     <>
@@ -34,8 +34,8 @@ export default async function IntegrationsPage() {
             <h2>{category}</h2>
             <Stagger>
               <div className="integration-grid">
-                {inCategory.map(({ integration, enabled, configured }) => {
-                  const status = integrationStatus(integration, enabled, configured);
+                {inCategory.map(({ integration, enabled }) => {
+                  const status = integrationStatus(enabled);
                   return (
                     <div key={integration.id} className={`integration-card ${enabled ? 'enabled' : ''}`}>
                       <div className="integration-top">

@@ -195,7 +195,7 @@ export function describeForAgent(reading: DocumentReading): string {
   const fields = FIELD_LABELS.filter(([key]) => reading.fields[key]).map(([key, label]) => `${label}: ${reading.fields[key]}`);
   return (
     `[Attached ${reading.documentType} was read by the redaction pass. ` +
-    `The copy shown to the user is blurred with ${reading.boxes.length} identifying region(s) boxed; you never see the image itself. ` +
+    `The copy shown to the user has ${reading.boxes.length} identifying region(s) blacked out; you never see the image itself. ` +
     (fields.length ? `Fields read off it — ${fields.join(', ')}. ` : 'No fields could be read off it. ') +
     `These values are available this turn only and are not kept in the transcript.]`
   );

@@ -1,6 +1,5 @@
 import 'server-only';
 import type {
-  Appointment,
   Claim,
   ClaimResponse,
   Communication,
@@ -11,6 +10,9 @@ import type {
   Task,
 } from '@medplum/fhirtypes';
 import { getStore } from './medplum.server';
+import { formatSlot, listCalendar } from './appointments.server';
+import { bookedByLabel } from './calendar';
+import { patientDisplayName } from './patients.server';
 import { isDenied, parseDenial } from './intents/shared';
 
 /**
@@ -50,11 +52,6 @@ export interface TimelineEvent {
   badge?: { label: string; tone: 'good' | 'bad' | 'neutral' | 'accent' };
 }
 
-function nameOf(p: Patient): string {
-  const n = p.name?.[0];
-  return [n?.given?.join(' '), n?.family].filter(Boolean).join(' ') || 'Unknown patient';
-}
-
 function mrnOf(p: Patient): string | undefined {
   return p.identifier?.find((i) => i.value?.startsWith('MRN'))?.value ?? p.identifier?.[0]?.value;
 }
@@ -69,7 +66,7 @@ export async function listPatients(): Promise<PatientSummary[]> {
     const cov = coverages.find((c) => c.beneficiary?.reference === `Patient/${p.id}`);
     return {
       id: p.id!,
-      name: nameOf(p),
+      name: patientDisplayName(p),
       mrn: mrnOf(p),
       dob: p.birthDate,
       phone: p.telecom?.find((t) => t.system === 'phone')?.value,
@@ -88,7 +85,7 @@ export async function patientTimeline(patientId: string): Promise<TimelineEvent[
     store.search<Claim>('Claim', { patient: ref }),
     store.search<ClaimResponse>('ClaimResponse', { patient: ref }),
     store.search<ServiceRequest>('ServiceRequest', { subject: ref }),
-    store.search<Appointment>('Appointment', {}),
+    listCalendar({ patientId, includeCancelled: true, store }),
     // 'for' isn't a portable search param (Medplum uses 'patient'; the memory
     // store supports neither) — fetch all and filter here.
     store.search<Task>('Task', {}).then((all) => all.filter((t) => t.for?.reference === ref)),
@@ -177,15 +174,32 @@ export async function patientTimeline(patientId: string): Promise<TimelineEvent[
     });
   }
 
+  // Booking and its later outcome are two separate moments — "booked Aug 1,
+  // cancelled Aug 3" is the true story, and the timeline already sorts by `at`.
   for (const a of appts) {
-    if (!a.participant?.some((p) => p.actor?.reference === ref)) continue;
     events.push({
-      at: a.meta?.lastUpdated ?? a.start ?? '',
+      at: a.createdAt ?? a.updatedAt ?? a.start ?? '',
       kind: 'appointment',
-      title: `Appointment booked: ${a.description ?? 'visit'}`,
-      detail: a.start ? `Scheduled for ${new Date(a.start).toLocaleString()}` : undefined,
-      badge: { label: a.status ?? 'booked', tone: 'accent' },
+      title: `Appointment booked: ${a.description}`,
+      detail: `${formatSlot(a.start, a.end)} · by the ${bookedByLabel(a.bookedBy)}`,
+      badge: { label: 'booked', tone: 'accent' },
     });
+    if (a.status === 'cancelled') {
+      events.push({
+        at: a.updatedAt ?? '',
+        kind: 'appointment',
+        title: `Appointment cancelled: ${a.description}`,
+        detail: a.cancelledReason,
+        badge: { label: 'cancelled', tone: 'bad' },
+      });
+    } else if (a.status === 'fulfilled') {
+      events.push({
+        at: a.updatedAt ?? '',
+        kind: 'appointment',
+        title: `Visit completed: ${a.description}`,
+        badge: { label: 'completed', tone: 'good' },
+      });
+    }
   }
 
   for (const m of comms) {
@@ -262,7 +276,7 @@ export async function claimsBoard(): Promise<ClaimCard[]> {
     return {
       id: claim.id!,
       identifier: claim.identifier?.[0]?.value ?? claim.id!,
-      patientName: patient ? nameOf(patient) : 'Unknown',
+      patientName: patient ? patientDisplayName(patient) : 'Unknown',
       payer: coverage?.payor?.[0]?.display ?? 'Payer',
       amount: claim.total?.value,
       procedure: claim.item?.[0]?.productOrService?.text ?? claim.item?.[0]?.productOrService?.coding?.[0]?.display,
@@ -302,13 +316,15 @@ export async function patientPortal(
   // agents touch them), falling back to the seed demo hero.
   const store0 = await getStore();
   const [allAppts, allComms] = await Promise.all([
-    store0.search<Appointment>('Appointment', {}),
+    listCalendar({ store: store0 }),
     store0.search<Communication>('Communication', {}),
   ]);
   const latestByPatient = new Map<string, string>();
   for (const a of allAppts) {
-    const pref = a.participant?.find((p) => p.actor?.reference?.startsWith('Patient/'))?.actor?.reference;
-    const at = a.meta?.lastUpdated ?? a.start ?? '';
+    // Rank on when it was BOOKED, not last touched — otherwise cancelling a
+    // visit would make the phone jump to that patient.
+    const pref = a.patientId ? `Patient/${a.patientId}` : undefined;
+    const at = a.createdAt ?? a.start ?? '';
     if (pref && at > (latestByPatient.get(pref) ?? '')) latestByPatient.set(pref, at);
   }
   for (const m of allComms) {
@@ -333,7 +349,7 @@ async function portalItemsFor(patient: PatientSummary): Promise<PortalItem[]> {
 
   const [comms, appts, srs, cards] = await Promise.all([
     store.search<Communication>('Communication', { subject: ref }),
-    store.search<Appointment>('Appointment', {}),
+    listCalendar({ patientId: patient.id, includeCancelled: true, store }),
     store.search<ServiceRequest>('ServiceRequest', { subject: ref }),
     claimsBoard(),
   ]);
@@ -351,14 +367,14 @@ async function portalItemsFor(patient: PatientSummary): Promise<PortalItem[]> {
   }
 
   for (const a of appts) {
-    if (!a.participant?.some((p) => p.actor?.reference === ref)) continue;
+    const cancelled = a.status === 'cancelled';
     items.push({
-      at: a.meta?.lastUpdated ?? a.start ?? '',
+      at: (cancelled ? a.updatedAt : a.createdAt) ?? a.start ?? '',
       kind: 'visit',
-      title: a.description ?? 'Visit booked for you',
-      body: a.start
-        ? `${new Date(a.start).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })} at ${new Date(a.start).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })} — no action needed, just show up.`
-        : undefined,
+      title: cancelled ? `Your ${a.description.toLowerCase()} was cancelled` : a.description,
+      body: cancelled
+        ? 'Give us a call whenever you want to rebook — no rush.'
+        : `${formatSlot(a.start, a.end)} — no action needed, just show up.`,
     });
   }
 
@@ -404,35 +420,5 @@ export async function moneyRecovered(): Promise<number> {
     .reduce((s, r) => s + (r.payment?.amount?.value ?? 0), 0);
 }
 
-// ── Schedule ────────────────────────────────────────────────────────────────
-
-export interface AppointmentRow {
-  id: string;
-  description: string;
-  start?: string;
-  status: string;
-  patientName: string;
-  bookedAt?: string;
-}
-
-export async function listAppointments(): Promise<AppointmentRow[]> {
-  const store = await getStore();
-  const [appts, patients] = await Promise.all([
-    store.search<Appointment>('Appointment', {}),
-    store.search<Patient>('Patient', {}),
-  ]);
-  return appts
-    .map((a) => {
-      const patientRef = a.participant?.find((p) => p.actor?.reference?.startsWith('Patient/'))?.actor?.reference;
-      const patient = patients.find((p) => `Patient/${p.id}` === patientRef);
-      return {
-        id: a.id!,
-        description: a.description ?? 'Visit',
-        start: a.start,
-        status: a.status ?? 'booked',
-        patientName: patient ? nameOf(patient) : 'Unknown',
-        bookedAt: a.meta?.lastUpdated,
-      };
-    })
-    .sort((a, b) => (a.start ?? '').localeCompare(b.start ?? ''));
-}
+// The Schedule read model lives in appointments.server.ts — the calendar row
+// changes for the same reasons the write paths do, so they share one module.

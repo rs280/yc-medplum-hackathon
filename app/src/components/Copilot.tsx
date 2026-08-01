@@ -103,9 +103,9 @@ function TraceEntry({ t }: { t: PipelineTrace }) {
         <figure className="trace-image">
           <img
             src={data.redactedImage}
-            alt={`Attached ${typeof data.documentType === 'string' ? data.documentType : 'document'}, blurred with identifying details blacked out`}
+            alt={`Attached ${typeof data.documentType === 'string' ? data.documentType : 'document'}, identifying details blacked out`}
           />
-          <figcaption>page blurred, identifiers boxed — the original was never kept</figcaption>
+          <figcaption>identifiers blacked out — the original was never kept</figcaption>
         </figure>
       )}
       {Array.isArray(data.fields) && data.fields.length > 0 && (
@@ -580,7 +580,7 @@ export function Copilot({ models, defaultModel }: CopilotProps) {
           {attachError ? (
             <span className="attach-error">{attachError}</span>
           ) : (
-            <span className="attach-note">blurred and boxed before it reaches the chat</span>
+            <span className="attach-note">identifiers are blacked out before this reaches the chat</span>
           )}
         </div>
       )}

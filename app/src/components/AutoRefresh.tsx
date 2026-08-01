@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
+import { isLiveRefreshSuspended } from '@/lib/liveRefresh';
 
 export function AutoRefresh({ intervalMs = 4000 }: { intervalMs?: number }) {
   const router = useRouter();
@@ -9,6 +10,8 @@ export function AutoRefresh({ intervalMs = 4000 }: { intervalMs?: number }) {
 
   useEffect(() => {
     const id = setInterval(() => {
+      // Never refresh mid-drag — the array would change under the gesture.
+      if (isLiveRefreshSuspended()) return;
       router.refresh();
       setTick(new Date().toLocaleTimeString());
     }, intervalMs);

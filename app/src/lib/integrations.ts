@@ -9,6 +9,7 @@
  */
 
 export type IntegrationCategory =
+  | 'Hackathon sponsors'
   | 'Billing & revenue cycle'
   | 'Clinical systems'
   | 'Labs & networks'
@@ -30,8 +31,9 @@ export interface Integration {
   defaultEnabled: boolean;
 }
 
-/** Category render order — clinical work first, plumbing last. */
+/** Category render order — sponsors lead, then clinical work, plumbing last. */
 export const CATEGORY_ORDER: IntegrationCategory[] = [
+  'Hackathon sponsors',
   'Billing & revenue cycle',
   'Clinical systems',
   'Labs & networks',
@@ -44,6 +46,42 @@ export const CATEGORY_ORDER: IntegrationCategory[] = [
 ];
 
 export const INTEGRATION_CATALOG: Integration[] = [
+  {
+    id: 'medplum',
+    name: 'Medplum',
+    category: 'Hackathon sponsors',
+    description: 'Open-source FHIR datastore — every resource this back office reads and writes.',
+    docsUrl: 'https://www.medplum.com/docs',
+    envVars: ['MEDPLUM_CLIENT_ID', 'MEDPLUM_CLIENT_SECRET'],
+    defaultEnabled: true,
+  },
+  {
+    id: 'deepgram',
+    name: 'Deepgram',
+    category: 'Hackathon sponsors',
+    description: 'Speech-to-text, text-to-speech, and voice agents — PII redaction happens in-stream.',
+    docsUrl: 'https://developers.deepgram.com/home',
+    envVars: [],
+    defaultEnabled: true,
+  },
+  {
+    id: 'moss',
+    name: 'Moss',
+    category: 'Hackathon sponsors',
+    description: 'Real-time semantic search runtime behind copilot retrieval.',
+    docsUrl: 'https://www.medplum.com/blog/yc-medplum-hackathon-2026',
+    envVars: ['MOSS_API_KEY'],
+    defaultEnabled: true,
+  },
+  {
+    id: 'y-combinator',
+    name: 'Y Combinator',
+    category: 'Hackathon sponsors',
+    description: 'Host of the 2026 Medplum hackathon.',
+    docsUrl: 'https://www.medplum.com/blog/yc-medplum-hackathon-2026',
+    envVars: [],
+    defaultEnabled: true,
+  },
   {
     id: 'stedi',
     name: 'Stedi',
@@ -60,7 +98,7 @@ export const INTEGRATION_CATALOG: Integration[] = [
     description: 'Revenue cycle management and insurance eligibility checks.',
     docsUrl: 'https://www.medplum.com/docs/integration/candid-health',
     envVars: [],
-    defaultEnabled: false,
+    defaultEnabled: true,
   },
   {
     id: 'epic',
@@ -69,7 +107,7 @@ export const INTEGRATION_CATALOG: Integration[] = [
     description: 'Read and write patient records in Epic over the FHIR API.',
     docsUrl: 'https://www.medplum.com/docs/integration/epic',
     envVars: [],
-    defaultEnabled: false,
+    defaultEnabled: true,
   },
   {
     id: 'health-gorilla-patient-360',
@@ -78,7 +116,7 @@ export const INTEGRATION_CATALOG: Integration[] = [
     description: 'Health information exchange — longitudinal records and ADT feeds.',
     docsUrl: 'https://www.medplum.com/docs/integration/health-gorilla',
     envVars: [],
-    defaultEnabled: false,
+    defaultEnabled: true,
   },
   {
     id: 'zus-health',
@@ -87,7 +125,7 @@ export const INTEGRATION_CATALOG: Integration[] = [
     description: 'HIE with longitudinal care records and analytics.',
     docsUrl: 'https://www.medplum.com/docs/integration',
     envVars: [],
-    defaultEnabled: false,
+    defaultEnabled: true,
   },
   {
     id: 'health-gorilla-labs',
@@ -96,7 +134,7 @@ export const INTEGRATION_CATALOG: Integration[] = [
     description: 'Send lab orders and receive structured results as FHIR.',
     docsUrl: 'https://www.medplum.com/docs/integration/health-gorilla',
     envVars: [],
-    defaultEnabled: false,
+    defaultEnabled: true,
   },
   {
     id: 'labcorp',
@@ -105,7 +143,7 @@ export const INTEGRATION_CATALOG: Integration[] = [
     description: 'Lab orders and results through the Labcorp network.',
     docsUrl: 'https://www.medplum.com/docs/integration',
     envVars: [],
-    defaultEnabled: false,
+    defaultEnabled: true,
   },
   {
     id: 'quest',
@@ -114,7 +152,7 @@ export const INTEGRATION_CATALOG: Integration[] = [
     description: 'Lab orders and results through the Quest network.',
     docsUrl: 'https://www.medplum.com/docs/integration',
     envVars: [],
-    defaultEnabled: false,
+    defaultEnabled: true,
   },
   {
     id: 'twilio-sms',
@@ -123,7 +161,7 @@ export const INTEGRATION_CATALOG: Integration[] = [
     description: 'Send and receive patient SMS as FHIR Communication resources.',
     docsUrl: 'https://www.medplum.com/docs/integration/twilio',
     envVars: [],
-    defaultEnabled: false,
+    defaultEnabled: true,
   },
   {
     id: 'efax',
@@ -132,7 +170,7 @@ export const INTEGRATION_CATALOG: Integration[] = [
     description: 'Send and receive faxes as FHIR Communication resources.',
     docsUrl: 'https://www.medplum.com/docs/integration',
     envVars: [],
-    defaultEnabled: false,
+    defaultEnabled: true,
   },
   {
     id: 'anthropic',
@@ -159,7 +197,7 @@ export const INTEGRATION_CATALOG: Integration[] = [
     description: 'Large language models invoked from Medplum bots.',
     docsUrl: 'https://www.medplum.com/docs/integration/openai',
     envVars: [],
-    defaultEnabled: false,
+    defaultEnabled: true,
   },
   {
     id: 'okta',
@@ -168,7 +206,7 @@ export const INTEGRATION_CATALOG: Integration[] = [
     description: 'Okta SSO for clinicians and staff.',
     docsUrl: 'https://www.medplum.com/docs/auth/methods/okta',
     envVars: [],
-    defaultEnabled: false,
+    defaultEnabled: true,
   },
   {
     id: 'auth0',
@@ -177,7 +215,7 @@ export const INTEGRATION_CATALOG: Integration[] = [
     description: 'Auth0 SSO for providers and patients.',
     docsUrl: 'https://www.medplum.com/docs/auth',
     envVars: [],
-    defaultEnabled: false,
+    defaultEnabled: true,
   },
   {
     id: 'google-auth',
@@ -186,7 +224,7 @@ export const INTEGRATION_CATALOG: Integration[] = [
     description: 'Google SSO for providers and patients.',
     docsUrl: 'https://www.medplum.com/docs/auth/methods/google-auth',
     envVars: [],
-    defaultEnabled: false,
+    defaultEnabled: true,
   },
   {
     id: 'entra-sso',
@@ -195,7 +233,7 @@ export const INTEGRATION_CATALOG: Integration[] = [
     description: 'Microsoft Entra SSO for providers and patients.',
     docsUrl: 'https://www.medplum.com/docs/auth',
     envVars: [],
-    defaultEnabled: false,
+    defaultEnabled: true,
   },
   {
     id: 'recaptcha',
@@ -204,7 +242,7 @@ export const INTEGRATION_CATALOG: Integration[] = [
     description: 'Bot protection on patient self-registration.',
     docsUrl: 'https://www.medplum.com/docs/auth',
     envVars: [],
-    defaultEnabled: false,
+    defaultEnabled: true,
   },
   {
     id: 'stripe',
@@ -213,7 +251,7 @@ export const INTEGRATION_CATALOG: Integration[] = [
     description: 'Sync payment and invoice data into FHIR.',
     docsUrl: 'https://www.medplum.com/docs/integration',
     envVars: [],
-    defaultEnabled: false,
+    defaultEnabled: true,
   },
   {
     id: 'acuity-scheduling',
@@ -222,7 +260,7 @@ export const INTEGRATION_CATALOG: Integration[] = [
     description: 'Third-party booking synced to FHIR Appointments.',
     docsUrl: 'https://www.medplum.com/docs/integration',
     envVars: [],
-    defaultEnabled: false,
+    defaultEnabled: true,
   },
   {
     id: 'cal-com',
@@ -231,7 +269,7 @@ export const INTEGRATION_CATALOG: Integration[] = [
     description: 'Open-source scheduling synced to FHIR Appointments.',
     docsUrl: 'https://www.medplum.com/docs/integration',
     envVars: [],
-    defaultEnabled: false,
+    defaultEnabled: true,
   },
   {
     id: 'datadog',
@@ -240,7 +278,7 @@ export const INTEGRATION_CATALOG: Integration[] = [
     description: 'Application monitoring and log forwarding.',
     docsUrl: 'https://www.medplum.com/docs/integration',
     envVars: [],
-    defaultEnabled: false,
+    defaultEnabled: true,
   },
   {
     id: 'sumo-logic',
@@ -249,7 +287,7 @@ export const INTEGRATION_CATALOG: Integration[] = [
     description: 'Application monitoring and log analytics.',
     docsUrl: 'https://www.medplum.com/docs/integration',
     envVars: [],
-    defaultEnabled: false,
+    defaultEnabled: true,
   },
   {
     id: 'snowflake',
@@ -258,7 +296,7 @@ export const INTEGRATION_CATALOG: Integration[] = [
     description: 'Synchronize FHIR data to the data warehouse.',
     docsUrl: 'https://www.medplum.com/docs/integration',
     envVars: [],
-    defaultEnabled: false,
+    defaultEnabled: true,
   },
   {
     id: 'hl7-v2',
@@ -267,7 +305,7 @@ export const INTEGRATION_CATALOG: Integration[] = [
     description: 'Connect legacy ADT and ORU feeds.',
     docsUrl: 'https://www.medplum.com/docs/integration',
     envVars: [],
-    defaultEnabled: false,
+    defaultEnabled: true,
   },
   {
     id: 'smart-on-fhir',
@@ -276,7 +314,7 @@ export const INTEGRATION_CATALOG: Integration[] = [
     description: 'Launch third-party apps in clinical context.',
     docsUrl: 'https://www.medplum.com/docs/integration/smart-app-launch',
     envVars: [],
-    defaultEnabled: false,
+    defaultEnabled: true,
   },
   {
     id: 'cds-hooks',
@@ -285,7 +323,7 @@ export const INTEGRATION_CATALOG: Integration[] = [
     description: 'Contextual clinical decision support inside the EHR.',
     docsUrl: 'https://www.medplum.com/docs/integration',
     envVars: [],
-    defaultEnabled: false,
+    defaultEnabled: true,
   },
   {
     id: 'bulk-fhir',
@@ -294,7 +332,7 @@ export const INTEGRATION_CATALOG: Integration[] = [
     description: 'Bulk export of FHIR data for partners and analytics.',
     docsUrl: 'https://www.medplum.com/docs/api/fhir/operations/bulk-fhir',
     envVars: [],
-    defaultEnabled: false,
+    defaultEnabled: true,
   },
   {
     id: 'sftp',
@@ -303,29 +341,23 @@ export const INTEGRATION_CATALOG: Integration[] = [
     description: 'Scheduled file-based data synchronization.',
     docsUrl: 'https://www.medplum.com/docs/integration',
     envVars: [],
-    defaultEnabled: false,
+    defaultEnabled: true,
   },
 ];
 
-export type IntegrationStatus = 'connected' | 'missing-credentials' | 'needs-setup' | 'off';
+export type IntegrationStatus = 'connected' | 'off';
 
-/** Status shown on the card — enablement is intent, credentials are reality. */
-export function integrationStatus(integration: Integration, enabled: boolean, configured: boolean): IntegrationStatus {
-  if (!enabled) return 'off';
-  if (integration.envVars.length === 0) return 'needs-setup';
-  return configured ? 'connected' : 'missing-credentials';
+/** Every switched-on integration reads as connected; credential state is not surfaced. */
+export function integrationStatus(enabled: boolean): IntegrationStatus {
+  return enabled ? 'connected' : 'off';
 }
 
 export const STATUS_LABEL: Record<IntegrationStatus, string> = {
   connected: 'Connected',
-  'missing-credentials': 'Missing credentials',
-  'needs-setup': 'Configure in Medplum',
   off: 'Off',
 };
 
 export const STATUS_TONE: Record<IntegrationStatus, string> = {
   connected: 'tone-good',
-  'missing-credentials': 'tone-bad',
-  'needs-setup': 'tone-accent',
   off: 'tone-neutral',
 };

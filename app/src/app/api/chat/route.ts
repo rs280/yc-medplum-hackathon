@@ -5,6 +5,14 @@ import { patientPortal } from '@/lib/workspace.server';
 import { getLlmClient, resolveChatModel } from '@/lib/llmClient';
 import {
   bookAppointment,
+  cancelAppointment,
+  CLINIC_TIME_ZONE,
+  formatSlot,
+  listCalendar,
+  rescheduleAppointment,
+} from '@/lib/appointments.server';
+import { todayKey, zonedIso } from '@/lib/calendar';
+import {
   checkCoverage,
   completeVisit,
   DENIAL_TEXTS,
@@ -110,15 +118,65 @@ const TOOLS: Anthropic.Tool[] = [
   },
   {
     name: 'book_appointment',
-    description: 'Front desk: book a visit for a registered patient. Compute startIso from the user’s words and today’s date; omit it for tomorrow 10:00.',
+    description:
+      'Front desk: book a visit for a registered patient. Compute startIso from the user’s words and today’s date, and include the clinic timezone offset. Omit startIso for tomorrow 10:00.',
     input_schema: {
       type: 'object',
       properties: {
         patientName: { type: 'string' },
         description: { type: 'string', description: 'e.g. "New patient check-up"' },
-        startIso: { type: 'string', description: 'ISO 8601 start time' },
+        startIso: {
+          type: 'string',
+          description: 'ISO 8601 start with offset, e.g. 2026-08-04T10:00:00-07:00',
+        },
+        minutes: { type: 'integer', description: 'Visit length in minutes (default 30)' },
       },
       required: ['patientName'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'list_appointments',
+    description:
+      'Read the clinic calendar. Returns each visit with a short handle like APT-4F2A — that handle is how you cancel or move it. Call this for "what is on Tuesday", "is Maria booked", "how busy are we this week", and ALWAYS before cancelling or rescheduling unless you already have the handle from earlier in this conversation.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        fromIso: { type: 'string', description: 'ISO 8601 start of the window, inclusive. Default: now.' },
+        toIso: { type: 'string', description: 'ISO 8601 end of the window, exclusive. Default: 14 days after fromIso.' },
+        patientName: { type: 'string', description: 'Limit to one patient.' },
+        includeCancelled: { type: 'boolean', description: 'Include cancelled visits (default false).' },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'cancel_appointment',
+    description:
+      'Cancel a booked visit. The visit is KEPT and marked cancelled: the calendar shows it struck through and the patient’s record shows the cancellation, so this is safe and reversible from the calendar. Identify it by the handle from list_appointments. Confirm with the user before you call this.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        handle: { type: 'string', description: 'Handle from list_appointments, e.g. APT-4F2A' },
+        patientName: { type: 'string', description: 'Use only when the patient has exactly one upcoming visit' },
+        reason: { type: 'string', description: 'Why, in the caller’s own words. Leave it out if they did not say.' },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'reschedule_appointment',
+    description:
+      'Move an existing visit to a new date and time. Same visit, new slot — the calendar and the patient record both show the move. Identify it by the handle from list_appointments.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        handle: { type: 'string', description: 'Handle from list_appointments, e.g. APT-4F2A' },
+        patientName: { type: 'string', description: 'Use only when the patient has exactly one upcoming visit' },
+        startIso: { type: 'string', description: 'New ISO 8601 start with offset' },
+        minutes: { type: 'integer', description: 'New visit length in minutes' },
+      },
+      required: ['startIso'],
       additionalProperties: false,
     },
   },
@@ -210,6 +268,47 @@ async function executeTool(
         patientName: String(input.patientName),
         description: typeof input.description === 'string' ? input.description : undefined,
         startIso: typeof input.startIso === 'string' ? input.startIso : undefined,
+        minutes: typeof input.minutes === 'number' ? input.minutes : undefined,
+        source: 'copilot',
+      });
+      return { result: [r.summary, r.warning].filter(Boolean).join(' '), refresh: true, detail: r.summary };
+    }
+    case 'list_appointments': {
+      const rows = await listCalendar({
+        fromIso: typeof input.fromIso === 'string' ? input.fromIso : undefined,
+        toIso: typeof input.toIso === 'string' ? input.toIso : undefined,
+        patientName: typeof input.patientName === 'string' ? input.patientName : undefined,
+        includeCancelled: input.includeCancelled === true,
+      });
+      // Front-desk projection: a first name and last initial, never the id or
+      // full name — this is the one tool that reads the whole roster at once.
+      const agentRows = rows.map((r) => ({
+        handle: r.handle,
+        patient: r.patientShortName,
+        what: r.description,
+        start: r.start,
+        end: r.end,
+        status: r.status,
+        bookedBy: r.bookedBy,
+      }));
+      return { result: JSON.stringify(agentRows), refresh: false, detail: `${rows.length} appointment(s)` };
+    }
+    case 'cancel_appointment': {
+      const r = await cancelAppointment({
+        handle: typeof input.handle === 'string' ? input.handle : undefined,
+        patientName: typeof input.patientName === 'string' ? input.patientName : undefined,
+        reason: typeof input.reason === 'string' ? input.reason : undefined,
+        by: 'copilot',
+      });
+      return { result: r.summary, refresh: true, detail: r.summary };
+    }
+    case 'reschedule_appointment': {
+      const r = await rescheduleAppointment({
+        handle: typeof input.handle === 'string' ? input.handle : undefined,
+        patientName: typeof input.patientName === 'string' ? input.patientName : undefined,
+        startIso: String(input.startIso),
+        minutes: typeof input.minutes === 'number' ? input.minutes : undefined,
+        by: 'copilot',
       });
       return { result: r.summary, refresh: true, detail: r.summary };
     }
@@ -432,6 +531,39 @@ function fmtDur(ms: number | null): string {
   return ms < 90_000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.round(ms / 60_000)}m`;
 }
 
+const WEEKDAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+
+/**
+ * Good-enough date parsing for the no-LLM fallback only — presentation logic,
+ * not domain logic, so it stays beside the router rather than in lib/.
+ * Returns undefined when nothing date-like is present.
+ */
+function parseLooseDate(text: string): string | undefined {
+  const [year, month, day] = todayKey(CLINIC_TIME_ZONE).split('-').map(Number);
+  let target: Date | undefined;
+
+  if (/\btoday\b/.test(text)) target = new Date(Date.UTC(year, month - 1, day));
+  else if (/\btomorrow\b/.test(text)) target = new Date(Date.UTC(year, month - 1, day + 1));
+  else {
+    const named = WEEKDAYS.findIndex((d) => new RegExp(`\\b${d}\\b`).test(text));
+    if (named >= 0) {
+      const base = new Date(Date.UTC(year, month - 1, day));
+      const delta = (named - base.getUTCDay() + 7) % 7 || 7;
+      target = new Date(Date.UTC(year, month - 1, day + delta));
+    }
+  }
+  if (!target) return undefined;
+
+  const at = /\b(?:at\s*)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/.exec(text);
+  let minutes = 10 * 60;
+  if (at) {
+    let hour = Number(at[1]) % 12;
+    if (at[3] === 'pm') hour += 12;
+    minutes = hour * 60 + Number(at[2] ?? 0);
+  }
+  return zonedIso(target.toISOString().slice(0, 10), minutes, CLINIC_TIME_ZONE);
+}
+
 async function fallbackChat(history: ChatMessage[], emit: Emit): Promise<void> {
   const text = history[history.length - 1]?.content.toLowerCase() ?? '';
   const claim = /claim[\s-]*2|demo-claim-2/.test(text) ? 'DEMO-CLAIM-2' : 'DEMO-CLAIM-1';
@@ -451,6 +583,66 @@ async function fallbackChat(history: ChatMessage[], emit: Emit): Promise<void> {
       emit({ type: 'text', text: `That didn't work: ${message}` });
     }
   };
+
+  // Calendar work must be tested BEFORE the agent events: "book a follow-up for
+  // Maria" contains "follow-up" and would otherwise fire the whole discharge pipeline.
+  const isCalendar =
+    /\b(book|schedule|cancel|call off|move|reschedule|calendar|what'?s on|who'?s (coming|booked)|appointments?)\b/.test(
+      text,
+    );
+
+  if (isCalendar) {
+    const calendarStep = async (name: string, summary: string, run: () => Promise<string>) => {
+      emit({ type: 'tool', id: 'f1', name, summary, status: 'running' });
+      try {
+        const detail = await run();
+        emit({ type: 'tool', id: 'f1', name, summary, status: 'done', detail, refresh: name !== 'list_appointments' });
+        emit({ type: 'text', text: detail });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        emit({ type: 'tool', id: 'f1', name, summary, status: 'error', detail: message });
+        emit({ type: 'text', text: message });
+      }
+    };
+
+    const handle = text.match(/\bapt-[0-9a-f]{4}\b/i)?.[0];
+    const named = text.match(/\bfor\s+([a-z][a-z' -]{1,40}?)(?:\s+(?:on|at|tomorrow|today|next)\b|[.,?]|$)/i)?.[1];
+
+    if (/\b(cancel|call off)\b/.test(text)) {
+      return calendarStep('cancel_appointment', 'cancel a visit', async () => {
+        const r = await cancelAppointment({ handle, patientName: handle ? undefined : named, by: 'copilot' });
+        return r.summary;
+      });
+    }
+    if (/\b(move|reschedule)\b/.test(text)) {
+      return calendarStep('reschedule_appointment', 'move a visit', async () => {
+        const when = parseLooseDate(text);
+        if (!when) return 'Tell me the new date and time — for example "move APT-4F2A to Thursday at 2pm".';
+        const r = await rescheduleAppointment({
+          handle,
+          patientName: handle ? undefined : named,
+          startIso: when,
+          by: 'copilot',
+        });
+        return r.summary;
+      });
+    }
+    if (/\b(book|schedule)\b/.test(text) && named) {
+      return calendarStep('book_appointment', 'book a visit', async () => {
+        const r = await bookAppointment({ patientName: named, startIso: parseLooseDate(text), source: 'copilot' });
+        return [r.summary, r.warning].filter(Boolean).join(' ');
+      });
+    }
+    return calendarStep('list_appointments', 'read the calendar', async () => {
+      const rows = await listCalendar({ patientName: named });
+      if (rows.length === 0) return 'Nothing booked in that range.';
+      const lines = rows
+        .slice(0, 6)
+        .map((r) => `${r.handle} ${formatSlot(r.start, r.end)}, ${r.patientShortName}, ${r.description}`)
+        .join('; ');
+      return `${rows.length} visit(s) coming up: ${lines}. Say "cancel APT-XXXX" to call one off.`;
+    });
+  }
 
   if (/(approve|approv|overturn|won|paid)/.test(text)) return runTool('approve', EVENT_LABELS.approve);
   if (/(deny|denial|appeal|reject)/.test(text)) return runTool('deny', EVENT_LABELS.deny);
@@ -490,7 +682,7 @@ async function fallbackChat(history: ChatMessage[], emit: Emit): Promise<void> {
   emit({
     type: 'text',
     text:
-      'I can run the back office for you. Try: "appeal the denial on claim 1", "the payer approved claim 1", "run discharge outreach", "start the prior auth for the MRI", "triage claim 2", or "what\'s our win rate?"',
+      'I can run the back office for you. Try: "appeal the denial on claim 1", "the payer approved claim 1", "run discharge outreach", "start the prior auth for the MRI", "triage claim 2", "what\'s our win rate?", "what\'s on the calendar", "book a check-up for Leo Kim tomorrow at 2pm", or "cancel APT-4F2A".',
   });
 }
 

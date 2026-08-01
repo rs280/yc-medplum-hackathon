@@ -1,7 +1,9 @@
 import 'server-only';
-import type { Appointment, Claim, ClaimResponse, Coverage, Encounter, Patient, ServiceRequest } from '@medplum/fhirtypes';
+import type { Claim, ClaimResponse, Coverage, Encounter, Patient, ServiceRequest } from '@medplum/fhirtypes';
 import { getStore, writeAudit, type FhirStore } from './medplum.server';
 import { coverageFor } from './intents/shared';
+import { fulfilNextBooked } from './appointments.server';
+import { findPatientByName, patientDisplayName } from './patients.server';
 import { checkEligibility } from './stedi.server';
 import { listEpisodic } from './memory/episodic';
 import { avgTurnaroundMs, loadPlaybook } from './memory/playbook';
@@ -166,20 +168,6 @@ export async function fireEvent(
 
 // ── Front-desk actions (AI intake → booking → checkout) ─────────────────────
 
-function fullNameOf(p: Patient): string {
-  const n = p.name?.[0];
-  return [n?.given?.join(' '), n?.family].filter(Boolean).join(' ');
-}
-
-async function findPatientByName(store: FhirStore, name: string): Promise<Patient | undefined> {
-  const patients = await store.search<Patient>('Patient', {});
-  const q = name.trim().toLowerCase();
-  return (
-    patients.find((p) => fullNameOf(p).toLowerCase() === q) ??
-    patients.find((p) => fullNameOf(p).toLowerCase().includes(q) || q.includes(fullNameOf(p).toLowerCase()))
-  );
-}
-
 function shortId(): string {
   return Date.now().toString(36).toUpperCase().slice(-6);
 }
@@ -200,7 +188,7 @@ export async function registerPatient(opts: {
   const existing = await findPatientByName(store, opts.name);
   if (existing) {
     const mrn = existing.identifier?.[0]?.value ?? existing.id!;
-    return { summary: `${fullNameOf(existing)} is already registered (MRN ${mrn}).`, mrn };
+    return { summary: `${patientDisplayName(existing)} is already registered (MRN ${mrn}).`, mrn };
   }
 
   const parts = opts.name.trim().split(/\s+/);
@@ -244,45 +232,17 @@ export async function checkCoverage(patientName: string): Promise<{ summary: str
   if (!patient) return { summary: `No patient named "${patientName}" is registered yet.` };
   const coverage = await coverageFor(store, `Patient/${patient.id}`);
   const payer = coverage?.payor?.[0]?.display;
-  if (!payer) return { summary: `${fullNameOf(patient)} is registered but has no insurance on file.` };
+  if (!payer) return { summary: `${patientDisplayName(patient)} is registered but has no insurance on file.` };
   const elig = await checkEligibility(payer);
   return {
     summary:
-      `${fullNameOf(patient)} is covered by ${payer}${coverage?.subscriberId ? ` (member ${coverage.subscriberId})` : ''}; ` +
+      `${patientDisplayName(patient)} is covered by ${payer}${coverage?.subscriberId ? ` (member ${coverage.subscriberId})` : ''}; ` +
       `eligibility check says the plan is ${elig.planStatus}, and prior authorization ${
         elig.authOrCertIndicator === 'Y' ? 'is required for imaging services' : 'is not indicated'
       }.`,
   };
 }
 
-/** AI scheduling: books an Appointment for a registered patient. */
-export async function bookAppointment(opts: {
-  patientName: string;
-  description?: string;
-  startIso?: string;
-}): Promise<{ summary: string }> {
-  const store = await getStore();
-  const patient = await findPatientByName(store, opts.patientName);
-  if (!patient) throw new Error(`No patient named '${opts.patientName}' — register them first`);
-  let start = opts.startIso ? new Date(opts.startIso) : new Date(NaN);
-  if (isNaN(start.getTime())) {
-    start = new Date();
-    start.setDate(start.getDate() + 1);
-    start.setHours(10, 0, 0, 0);
-  }
-  const end = new Date(start.getTime() + 30 * 60_000);
-  const appt = await store.create<Appointment>({
-    resourceType: 'Appointment',
-    status: 'booked',
-    description: opts.description ?? 'New patient check-up',
-    start: start.toISOString(),
-    end: end.toISOString(),
-    participant: [{ actor: { reference: `Patient/${patient.id}`, display: fullNameOf(patient) }, status: 'accepted' }],
-  });
-  return {
-    summary: `Booked "${appt.description}" for ${fullNameOf(patient)} on ${start.toLocaleString(undefined, { weekday: 'long', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}.`,
-  };
-}
 
 /**
  * AI checkout: ends the visit. Marks the booked appointment fulfilled, writes
@@ -300,11 +260,7 @@ export async function completeVisit(
   const patientRef = { reference: `Patient/${patient.id}` };
   const procedure = opts.procedure ?? 'Office visit — new patient check-up';
 
-  const appts = await store.search<Appointment>('Appointment', {});
-  const booked = appts.find(
-    (a) => a.status === 'booked' && a.participant?.some((p) => p.actor?.reference === patientRef.reference),
-  );
-  if (booked) await store.update<Appointment>({ ...booked, status: 'fulfilled' });
+  await fulfilNextBooked(patientRef.reference, store);
 
   const suffix = shortId();
   const now = new Date();
@@ -338,7 +294,7 @@ export async function completeVisit(
   const pipeline = await runPipeline(encounter, onStep);
   return {
     summary:
-      `Visit complete for ${fullNameOf(patient)}. Discharge outreach ${pipeline.status}: ${pipeline.detail ?? ''}. ` +
+      `Visit complete for ${patientDisplayName(patient)}. Discharge outreach ${pipeline.status}: ${pipeline.detail ?? ''}. ` +
       `Visit claim ${claimIdentifier} ($${opts.amount ?? 180}) drafted and sitting in Ready.`,
     claimIdentifier,
     pipeline,

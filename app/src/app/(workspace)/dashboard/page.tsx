@@ -14,7 +14,8 @@ import {
 import { getStore } from '@/lib/medplum.server';
 import { listEpisodic, type StoredEpisodic } from '@/lib/memory/episodic';
 import { avgTurnaroundMs, loadPlaybook } from '@/lib/memory/playbook';
-import { listAppointments, moneyRecovered } from '@/lib/workspace.server';
+import { listCalendar } from '@/lib/appointments.server';
+import { moneyRecovered } from '@/lib/workspace.server';
 import { renderRedacted } from '@/components/Redacted';
 import { CountUp, Stagger } from '@/components/anim';
 
@@ -204,7 +205,7 @@ export default async function Dashboard() {
     listEpisodic(store),
     loadPlaybook(store),
     moneyRecovered(),
-    listAppointments(),
+    listCalendar(),
   ]);
 
   const appeals = episodic.filter((e) => e.intent === 'denial-appeal');

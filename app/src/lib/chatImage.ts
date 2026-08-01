@@ -83,25 +83,21 @@ export async function loadAttachment(file: File): Promise<ImageAttachment> {
 }
 
 /**
- * Render the safe copy of a document: the whole page blurred past legibility,
- * then opaque boxes over the regions the pass identified.
+ * Render the safe copy of a document: the page as-is, with opaque boxes over
+ * the regions the pass identified. The rest stays readable so the front desk
+ * can still see the insurer, plan, and copay.
  *
- * The blur is the guarantee and the boxes are the signal, in that order.
- * Measured against a known card, the bounding boxes that vision models return
- * are off by anywhere from 3% to 17% of the image height and run undersized —
- * good enough to say "there is an identifier here", nowhere near good enough
- * to be the only thing covering it. Blurring first makes a missed or misplaced
- * box a cosmetic problem instead of a disclosure.
+ * The boxes are therefore the only thing covering PHI, and they are only as
+ * good as the coordinates the vision model returned — measured against a known
+ * card those ran 3%–17% of image height off and undersized, so a bad reading
+ * leaves an identifier visible here. The padding below buys back a little
+ * margin; it does not fix a badly placed box.
  */
 export async function drawRedactedImage(dataUrl: string, boxes: PhiBox[]): Promise<string> {
   const image = await decodeImage(dataUrl);
   const [canvas, ctx] = canvasFor(image.width, image.height);
-
-  const shortEdge = Math.min(canvas.width, canvas.height);
-  ctx.filter = `blur(${Math.max(10, Math.round(shortEdge / 28))}px)`;
   ctx.drawImage(image, 0, 0);
 
-  ctx.filter = 'none';
   ctx.fillStyle = '#000';
   const padX = canvas.width * BOX_PADDING_FRACTION;
   const padY = canvas.height * BOX_PADDING_FRACTION;

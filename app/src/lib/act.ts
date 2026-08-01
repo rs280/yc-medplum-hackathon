@@ -1,6 +1,7 @@
 import 'server-only';
-import type { Appointment, DocumentReference, ServiceRequest } from '@medplum/fhirtypes';
+import type { DocumentReference, ServiceRequest } from '@medplum/fhirtypes';
 import type { FhirStore } from './medplum.server';
+import { bookAppointment } from './appointments.server';
 import type { IntentConfig, IntentContext } from './intents/shared';
 import type { ReasonOutput } from './reason';
 import { checkEligibility, sendAttachment275, submitClaim837, submitPriorAuth278 } from './stedi.server';
@@ -18,6 +19,8 @@ export interface ActionTaken {
   simulated?: boolean;
 }
 
+// This agent's own scheduling POLICY (follow-up at 10 days, screening at 14),
+// distinct from the appointment service's "tomorrow 10:00" default — not a duplicate.
 function plusDays(days: number, hour = 10): string {
   const d = new Date();
   d.setDate(d.getDate() + days);
@@ -74,29 +77,34 @@ export async function act(
     }
 
     case 'discharge-caregap': {
-      const followUp = await store.create<Appointment>({
-        resourceType: 'Appointment',
-        status: 'booked',
+      const followUp = await bookAppointment({
+        store,
+        patientRef: ctx.patientRef,
         description: `Post-discharge follow-up (${ctx.meta.encounterType ?? 'encounter'})`,
-        start: plusDays(10),
-        end: plusDays(10, 11),
-        participant: [{ actor: { reference: ctx.patientRef }, status: 'accepted' }],
+        startIso: plusDays(10),
+        minutes: 60,
+        source: 'discharge-agent',
+        allowStackedSlot: true,
       });
-      actions.push({ action: 'follow-up-booked', detail: `Appointment/${followUp.id} in 10 days` });
+      actions.push({ action: 'follow-up-booked', detail: `${followUp.appointment.handle} in 10 days` });
 
       for (const sr of ctx.overdueSrs ?? []) {
-        const appt = await store.create<Appointment>({
-          resourceType: 'Appointment',
-          status: 'booked',
-          description: `Care-gap closure: ${sr.code?.text ?? sr.code?.coding?.[0]?.display ?? 'screening'}`,
-          start: plusDays(14),
-          end: plusDays(14, 11),
-          participant: [{ actor: { reference: ctx.patientRef }, status: 'accepted' }],
+        const label = sr.code?.text ?? sr.code?.coding?.[0]?.display ?? 'screening';
+        const booked = await bookAppointment({
+          store,
+          patientRef: ctx.patientRef,
+          description: `Care-gap closure: ${label}`,
+          startIso: plusDays(14),
+          minutes: 60,
+          source: 'care-gap-agent',
+          // Links the visit to the order it closes, so cancelling reopens the gap.
+          basedOnRef: `ServiceRequest/${sr.id}`,
+          allowStackedSlot: true,
         });
         await store.update<ServiceRequest>({ ...sr, status: 'completed' });
         actions.push({
           action: 'care-gap-closed',
-          detail: `${sr.code?.text ?? sr.code?.coding?.[0]?.display ?? 'screening'} booked (Appointment/${appt.id}); ServiceRequest completed`,
+          detail: `${label} booked (${booked.appointment.handle}); ServiceRequest completed`,
         });
       }
 
