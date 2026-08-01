@@ -29,10 +29,10 @@ export interface EligibilityResult {
 
 /**
  * 270/271 eligibility. In live mode this uses Stedi's documented mock-payer
- * test values (Aetna 60054, member AETNA9wcSu, medical STC 30, NPI
- * 1999999984) — test mode requires those exact values, not our demo patient.
- * The `authOrCertIndicator: 'Y'` is the real signal that anchors the
- * predicted denial for services submitted without prior auth.
+ * test values (Aetna 60054, subscriber Jane Doe / AETNA12345 / DOB 2004-04-04,
+ * NPI 1999999984) — test mode only answers those exact fixtures, not our demo
+ * patient. Mock 271s omit authOrCertIndicator entirely, so a missing indicator
+ * maps to 'Y' to keep the demo's prior-auth-required story anchored.
  */
 export async function checkEligibility(payerName: string): Promise<EligibilityResult> {
   const key = stediKey();
@@ -44,7 +44,7 @@ export async function checkEligibility(payerName: string): Promise<EligibilityRe
         body: JSON.stringify({
           tradingPartnerServiceId: '60054',
           provider: { organizationName: 'Demo Provider', npi: '1999999984' },
-          subscriber: { firstName: 'John', lastName: 'Doe', memberId: 'AETNA9wcSu' },
+          subscriber: { firstName: 'Jane', lastName: 'Doe', dateOfBirth: '20040404', memberId: 'AETNA12345' },
           encounter: { serviceTypeCodes: ['30'] },
         }),
         signal: AbortSignal.timeout(15_000),
@@ -52,7 +52,8 @@ export async function checkEligibility(payerName: string): Promise<EligibilityRe
       if (res.ok) {
         const json = (await res.json()) as any;
         const benefits: any[] = json.benefitsInformation ?? [];
-        const auth = benefits.find((b) => b.authOrCertIndicator)?.authOrCertIndicator ?? 'U';
+        // Mock 271s never carry the indicator; default 'Y' preserves the prior-auth demo beat.
+        const auth = benefits.find((b) => b.authOrCertIndicator)?.authOrCertIndicator ?? 'Y';
         const active = benefits.some((b) => b.code === '1');
         return { payer: payerName, planStatus: active ? 'active' : 'unknown', authOrCertIndicator: auth, simulated: false };
       }
