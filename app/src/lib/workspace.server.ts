@@ -290,9 +290,31 @@ export interface PortalItem {
  */
 export async function patientPortal(): Promise<{ patient?: PatientSummary; items: PortalItem[] }> {
   const patients = await listPatients();
-  // The hero of the demo story is the original seed patient; Synthea patients
-  // fill out the roster but don't hijack the phone.
-  const patient = patients.find((p) => p.mrn === 'MRN-001234') ?? patients[0];
+  // The phone follows the story: whoever got the most recent appointment or
+  // outreach owns it (so a live-registered patient takes over the moment the
+  // agents touch them), falling back to the seed demo hero.
+  const store0 = await getStore();
+  const [allAppts, allComms] = await Promise.all([
+    store0.search<Appointment>('Appointment', {}),
+    store0.search<Communication>('Communication', {}),
+  ]);
+  const latestByPatient = new Map<string, string>();
+  for (const a of allAppts) {
+    const pref = a.participant?.find((p) => p.actor?.reference?.startsWith('Patient/'))?.actor?.reference;
+    const at = a.meta?.lastUpdated ?? a.start ?? '';
+    if (pref && at > (latestByPatient.get(pref) ?? '')) latestByPatient.set(pref, at);
+  }
+  for (const m of allComms) {
+    if (m.category?.[0]?.text !== 'outreach message') continue;
+    const pref = m.subject?.reference;
+    const at = m.sent ?? m.meta?.lastUpdated ?? '';
+    if (pref && at > (latestByPatient.get(pref) ?? '')) latestByPatient.set(pref, at);
+  }
+  const activeRef = [...latestByPatient.entries()].sort((a, b) => b[1].localeCompare(a[1]))[0]?.[0];
+  const patient =
+    patients.find((p) => `Patient/${p.id}` === activeRef) ??
+    patients.find((p) => p.mrn === 'MRN-001234') ??
+    patients[0];
   if (!patient) return { patient: undefined, items: [] };
   const store = await getStore();
   const ref = `Patient/${patient.id}`;

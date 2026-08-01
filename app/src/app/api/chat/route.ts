@@ -1,10 +1,13 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import {
+  bookAppointment,
+  completeVisit,
   DENIAL_TEXTS,
   fireEvent,
   latestArtifact,
   recentRuns,
+  registerPatient,
   statusSnapshot,
   type CopilotEvent,
 } from '@/lib/copilot.server';
@@ -28,7 +31,8 @@ interface ChatMessage {
 
 type Emit = (event: Record<string, unknown>) => void;
 
-const SYSTEM = `You are the Back-Office Copilot for a medical clinic, embedded next to the operations dashboard. Your users are clinicians and front-desk staff, often speaking by voice, so answer in short plain sentences — no markdown headers, no tables, no bullet walls. Lead with the outcome.
+// Function (not const) so "today" is computed per request, not at module load.
+const buildSystem = () => `You are the Back-Office Copilot for a medical clinic, embedded next to the operations dashboard. Your users are clinicians and front-desk staff, often speaking by voice, so answer in short plain sentences — no markdown headers, no tables, no bullet walls. Lead with the outcome.
 
 You sit on top of four autonomous FHIR-triggered agents that share one pipeline (redact PHI → retrieve payer criteria via Moss + PubMed evidence → reason → de-redact → act → learn):
 - claim triage: pre-submission gap check ("triage" event)
@@ -36,7 +40,15 @@ You sit on top of four autonomous FHIR-triggered agents that share one pipeline 
 - discharge + care-gap outreach: post-discharge patient call that also closes overdue screenings ("discharge")
 - prior-auth docs: compiles authorization packets ("prior-auth")
 
-Everything you see is de-identified — placeholder tokens like [NAME_1] stand for real values; never guess at real patient identity. When the user asks you to DO something (appeal a denial, record an approval, run outreach, start a prior auth, triage a claim), call run_agent. When they ask how things are going, use get_status / list_runs / get_playbook. Use get_artifact when they want to see a letter. After acting, confirm what happened with concrete numbers (win rate, gaps closed, PHI tokens redacted). Seeded demo claims are DEMO-CLAIM-1 and DEMO-CLAIM-2. Keep replies under ~80 words unless reading an artifact.`;
+You are ALSO the front desk. You can register brand-new patients, book visits, and check patients out:
+- Someone says they're a new patient → collect name + insurance company (birth date, phone, member ID nice to have, don't nag), then call register_patient. Report the eligibility result in plain words.
+- "Book me a check-up" → book_appointment. Compute startIso from their words and today's date (below); default tomorrow 10:00 if vague.
+- Visit over ("check me out", "I just finished my visit") → complete_visit. This fires the real discharge pipeline (post-visit outreach, follow-up booking) AND drafts the visit claim — ALWAYS state the claim identifier it returns, and remember it: when they later say "insurance denied my claim" or "triage my claim", pass that identifier to run_agent via claimIdentifier.
+Never assume someone isn't registered — the store is shared across conversations, so just call the tool with their name; it will say if they're unknown.
+
+Pipeline data is de-identified — placeholder tokens like [NAME_1] stand for real values; never guess at real patient identity. When asked to act on the revenue cycle (appeal, approve, outreach, prior auth, triage), call run_agent. For "how are we doing", get_status / list_runs. get_artifact shows letters. After acting, confirm with concrete numbers. Seeded demo claims: DEMO-CLAIM-1, DEMO-CLAIM-2. Keep replies under ~80 words unless reading an artifact.
+
+Today is ${new Date().toString()}.`;
 
 const TOOLS: Anthropic.Tool[] = [
   {
@@ -61,6 +73,52 @@ const TOOLS: Anthropic.Tool[] = [
     input_schema: {
       type: 'object',
       properties: { runId: { type: 'string', description: 'Optional run id (prefix ok)' } },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'register_patient',
+    description:
+      'Front desk: register a brand-new patient and verify their insurance eligibility (270/271). Creates the medical record and coverage. Requires at least a name and an insurance company.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Full name, e.g. "Jordan Lee"' },
+        birthDate: { type: 'string', description: 'YYYY-MM-DD if given' },
+        phone: { type: 'string' },
+        payer: { type: 'string', description: 'Insurance company, e.g. Aetna, Blue Shield PPO, Medicare' },
+        memberId: { type: 'string', description: 'Insurance member ID if given' },
+      },
+      required: ['name', 'payer'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'book_appointment',
+    description: 'Front desk: book a visit for a registered patient. Compute startIso from the user’s words and today’s date; omit it for tomorrow 10:00.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        patientName: { type: 'string' },
+        description: { type: 'string', description: 'e.g. "New patient check-up"' },
+        startIso: { type: 'string', description: 'ISO 8601 start time' },
+      },
+      required: ['patientName'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'complete_visit',
+    description:
+      'Front desk checkout: end the patient’s visit. Marks their appointment fulfilled, records the finished encounter (which fires the discharge agent: post-visit outreach + follow-up booking through the full pipeline), and drafts the visit claim. Returns the claim identifier — always tell the user and reuse it for later run_agent calls on their claim.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        patientName: { type: 'string' },
+        procedure: { type: 'string', description: 'What the visit was, e.g. "Office visit — annual physical"' },
+        amount: { type: 'number', description: 'Billed amount in USD (default 180)' },
+      },
+      required: ['patientName'],
       additionalProperties: false,
     },
   },
@@ -118,6 +176,35 @@ async function executeTool(
         detail: artifact ? `${artifact.agent}${artifact.denialCode ? ` · ${artifact.denialCode}` : ''}` : 'none found',
       };
     }
+    case 'register_patient': {
+      const r = await registerPatient({
+        name: String(input.name),
+        birthDate: typeof input.birthDate === 'string' ? input.birthDate : undefined,
+        phone: typeof input.phone === 'string' ? input.phone : undefined,
+        payer: String(input.payer),
+        memberId: typeof input.memberId === 'string' ? input.memberId : undefined,
+      });
+      return { result: r.summary, refresh: true, detail: r.summary };
+    }
+    case 'book_appointment': {
+      const r = await bookAppointment({
+        patientName: String(input.patientName),
+        description: typeof input.description === 'string' ? input.description : undefined,
+        startIso: typeof input.startIso === 'string' ? input.startIso : undefined,
+      });
+      return { result: r.summary, refresh: true, detail: r.summary };
+    }
+    case 'complete_visit': {
+      const r = await completeVisit(
+        {
+          patientName: String(input.patientName),
+          procedure: typeof input.procedure === 'string' ? input.procedure : undefined,
+          amount: typeof input.amount === 'number' ? input.amount : undefined,
+        },
+        onPipelineStep,
+      );
+      return { result: r.summary, refresh: true, detail: r.summary };
+    }
     case 'run_agent': {
       const event = input.event as CopilotEvent;
       const fired = await fireEvent(
@@ -154,7 +241,7 @@ async function agentLoop(client: Anthropic, history: ChatMessage[], emit: Emit):
       model: process.env.ANTHROPIC_CHAT_MODEL || 'claude-opus-4-8',
       max_tokens: 2000,
       output_config: { effort: 'low' },
-      system: SYSTEM,
+      system: buildSystem(),
       tools: TOOLS,
       messages,
     });
@@ -183,7 +270,7 @@ async function agentLoop(client: Anthropic, history: ChatMessage[], emit: Emit):
       emit({ type: 'tool', id, name: block.name, summary, status: 'running' });
       try {
         const onPipelineStep =
-          block.name === 'run_agent'
+          block.name === 'run_agent' || block.name === 'complete_visit'
             ? (pe: PipelineStepEvent) => emit({ type: 'pipeline', toolId: id, step: pe.step, detail: pe.detail, data: pe.data })
             : undefined;
         const { result, refresh, detail } = await executeTool(block.name, input, onPipelineStep);

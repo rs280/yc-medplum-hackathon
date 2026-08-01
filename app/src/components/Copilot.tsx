@@ -53,11 +53,11 @@ interface Msg {
 }
 
 const SUGGESTIONS = [
+  'Hi, I’m a new patient — sign me up',
+  'Book me a check-up tomorrow morning',
+  'My visit’s done — check me out',
+  'Insurance denied my claim — fight it',
   'What’s our appeal win rate?',
-  'Appeal the denial on claim 1',
-  'The payer approved claim 1',
-  'Run discharge outreach',
-  'Start the prior auth for the MRI',
   'Show me the latest appeal letter',
 ];
 
