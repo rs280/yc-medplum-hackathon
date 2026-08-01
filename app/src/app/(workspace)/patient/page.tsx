@@ -1,4 +1,5 @@
 import { CalendarCheck, HeartPulse, MessageCircle, ShieldCheck, Signal, Wallet, Wifi } from 'lucide-react';
+import Link from 'next/link';
 import { patientPortal, type PortalItem } from '@/lib/workspace.server';
 import { Stagger } from '@/components/anim';
 
@@ -24,16 +25,36 @@ function fmtWhen(iso: string): string {
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' · ' + d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
 }
 
-export default async function PatientViewPage() {
-  const { patient, items } = await patientPortal();
+export default async function PatientViewPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ p?: string }>;
+}) {
+  const { p } = await searchParams;
+  const { patient, items, patients } = await patientPortal(p);
   const firstName = patient?.name.split(' ')[0] ?? 'your patient';
 
   return (
     <>
       <div className="page-head">
         <h1>Patient view</h1>
-        <p>What {firstName} sees on her phone while the back office works — she never sees the paperwork, only the outcomes.</p>
+        <p>What {firstName} sees on their phone while the back office works — they never see the paperwork, only the outcomes.</p>
       </div>
+
+      {patients.length > 1 && (
+        <div className="patient-switch" role="tablist" aria-label="Choose a patient">
+          {patients.map((pt) => (
+            <Link
+              key={pt.id}
+              href={`/patient?p=${pt.id}`}
+              className={`switch-chip ${pt.id === patient?.id ? 'active' : ''}`}
+              aria-current={pt.id === patient?.id ? 'page' : undefined}
+            >
+              {pt.name}
+            </Link>
+          ))}
+        </div>
+      )}
 
       <div className="patient-view">
         <div className="phone">

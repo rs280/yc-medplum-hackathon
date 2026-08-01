@@ -288,8 +288,15 @@ export interface PortalItem {
  * back office, the patient's phone quietly fills with good news. Everything
  * here is derived from the same FHIR resources as the clinician pages.
  */
-export async function patientPortal(): Promise<{ patient?: PatientSummary; items: PortalItem[] }> {
+export async function patientPortal(
+  selected?: string,
+): Promise<{ patient?: PatientSummary; items: PortalItem[]; patients: PatientSummary[] }> {
   const patients = await listPatients();
+  // Explicit selection (from the ?p= switcher) wins over the auto-follow.
+  if (selected) {
+    const chosen = patients.find((p) => p.id === selected || p.mrn === selected);
+    if (chosen) return { patient: chosen, items: await portalItemsFor(chosen), patients };
+  }
   // The phone follows the story: whoever got the most recent appointment or
   // outreach owns it (so a live-registered patient takes over the moment the
   // agents touch them), falling back to the seed demo hero.
@@ -315,7 +322,11 @@ export async function patientPortal(): Promise<{ patient?: PatientSummary; items
     patients.find((p) => `Patient/${p.id}` === activeRef) ??
     patients.find((p) => p.mrn === 'MRN-001234') ??
     patients[0];
-  if (!patient) return { patient: undefined, items: [] };
+  if (!patient) return { patient: undefined, items: [], patients };
+  return { patient, items: await portalItemsFor(patient), patients };
+}
+
+async function portalItemsFor(patient: PatientSummary): Promise<PortalItem[]> {
   const store = await getStore();
   const ref = `Patient/${patient.id}`;
   const firstName = patient.name.split(' ')[0];
@@ -381,7 +392,7 @@ export async function patientPortal(): Promise<{ patient?: PatientSummary; items
     }
   }
 
-  return { patient, items: items.filter((i) => i.at).sort((a, b) => b.at.localeCompare(a.at)) };
+  return items.filter((i) => i.at).sort((a, b) => b.at.localeCompare(a.at));
 }
 
 /** Dollars recovered via approvals after appeal — the layman headline number. */

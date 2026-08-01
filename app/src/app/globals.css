@@ -1511,6 +1511,35 @@ tbody tr:hover {
   color: var(--ink);
 }
 
+/* ── Patient switcher (Patient view) ────────────────────────────────────── */
+.patient-switch {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: -6px 0 14px;
+}
+.switch-chip {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-2);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 5px 12px;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 150ms ease, color 150ms ease, border-color 150ms ease;
+}
+.switch-chip:hover {
+  background: var(--track);
+  color: var(--ink);
+}
+.switch-chip.active {
+  background: var(--accent-soft);
+  border-color: rgba(8, 145, 178, 0.35);
+  color: var(--accent-strong);
+}
+
 /* ── Patient roster grid ────────────────────────────────────────────────── */
 .roster {
   display: grid;
