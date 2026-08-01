@@ -95,13 +95,40 @@ TypeScript strict / Node ≥20 / Fastify (+WS) / Medplum FHIR R4 (the DB + task 
 5. Duplicate events → Task-by-focus idempotency
 6. Voice off-script → tight prompt, locked demo path
 
-## Current state
-- Project lives at `~/dev/yc-medplum-hackathon/` (git repo, `main`, initial commit `bf8d9f1`).
-- **No code written yet.** AGENTS.md + plan are final/spec-level. Next step is Phase 0 scaffolding (accounts + real eligibility signal verification).
-- Team: user + teammate. Proposed split (sent to teammate): teammate → voice/discharge (Deepgram + Twilio); user → money loop (Stedi + Moss + PubMed + redaction + memory).
-- Open items from session: none blocking. All spec decisions settled.
+## Current state (Aug 1 — BUILT, end-to-end verified)
+
+The app is built under `app/` on a revised spec that supersedes parts of AGENTS.md:
+**Next.js App Router** (not Fastify), **four** intents on ONE `runPipeline()`
+(discharge + care-gap merged), **Anthropic API** (`claude-opus-5`, structured JSON
+output) instead of openai, and the **memory layer lives in FHIR** (`Basic`
+resources) with playbook lessons re-indexed into Moss after every resolved appeal.
+
+- Pipeline (7 steps, one code path, branching only in parse-intent + act):
+  parse intent → redact PHI (typed tokens + per-run surrogate map; `Redacted<string>`
+  brand makes raw-PHI calls to Moss/PubMed/LLM a **compile error**) → retrieve
+  (Moss all intents; PubMed appeal-only, real PMIDs enforced by a citation
+  validator that drops invented citations) → reason (Claude or deterministic
+  template fallback) → de-redact (fail-closed) → Task + Communication + AuditEvent
+  + Stedi/Twilio dispatch → episodic memory + playbook aggregate + Moss re-index.
+- Every integration degrades gracefully: no Medplum creds → file-backed store
+  (`app/.data/`), no Moss key → lexical fallback over the same corpus, no
+  Anthropic key → template letters, Stedi/Twilio → simulated (labeled) acks.
+- Verified live: denial → appeal citing real PMIDs → approval → playbook WON →
+  second denial retrieves `learned-CO-197` and reuses the winning argument;
+  triage/discharge (care gap closed + SMS)/prior-auth all run; dashboard shows
+  win rate by denial reason, PHI redaction counter, memory ledger.
+- Run it: `cd app && npm install && npm run seed && npm run index-moss &&
+  npm run dev` then `npm run demo -- deny|approve|triage|discharge|prior-auth`.
+  If port 3000 is taken, `PORT=3100 npm run dev` and prefix demo commands with
+  `APP_URL=http://localhost:3100`. Real services: fill `app/.env` from
+  `.env.example`; with Medplum creds also run `npm run subscriptions`
+  (needs public WEBHOOK_BASE_URL).
+- Team: user + teammate. Voice: `app/src/app/api/voice/route.ts` is a thin
+  Deepgram transcript receiver — the Twilio/Deepgram audio bridge (AGENTS.md §5.5)
+  is still the teammate's open workstream.
 
 ## Files
-- `AGENTS.md` — build spec (authoritative)
+- `app/` — the application (see `app/scripts/` for seed/subscriptions/index-moss/demo)
+- `AGENTS.md` — original build spec (superseded where it conflicts with the above)
 - `yc-medplum-hackathon-plan.md` — pitch + demo script + plan
 - `INFO.md` — this file

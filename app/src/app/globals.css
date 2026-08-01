@@ -1,0 +1,307 @@
+/* Design tokens — reference dataviz palette, light mode (deliberate single
+   look for the projector demo). Text always wears ink tokens, never series
+   color; status colors ship with icon + label, never color alone. */
+:root {
+  --page: #f9f9f7;
+  --surface: #fcfcfb;
+  --ink: #0b0b0b;
+  --ink-2: #52514e;
+  --muted: #898781;
+  --grid: #e1e0d9;
+  --baseline: #c3c2b7;
+  --border: rgba(11, 11, 11, 0.1);
+  --track: #f0efec;
+  --series: #2a78d6; /* single-hue magnitude encoding (win-rate bars) */
+  --good: #0ca30c;
+  --good-text: #006300;
+  --warning: #fab219;
+  --serious: #ec835a;
+  --critical: #d03b3b;
+  --font: system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--page);
+  color: var(--ink);
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.wrap {
+  max-width: 1140px;
+  margin: 0 auto;
+  padding: 28px 24px 64px;
+}
+
+/* ── Header ─────────────────────────────────────────────────────────────── */
+.header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.header h1 {
+  font-size: 20px;
+  font-weight: 700;
+  margin: 0;
+  letter-spacing: -0.01em;
+}
+.header .sub {
+  color: var(--ink-2);
+  margin: 2px 0 0;
+  font-size: 13px;
+}
+.chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 10px 0 20px;
+}
+.chip {
+  font-size: 11px;
+  color: var(--ink-2);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 10px;
+  white-space: nowrap;
+}
+.chip b {
+  color: var(--ink);
+  font-weight: 600;
+}
+.live {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.live .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--good);
+}
+
+/* ── Cards & stat tiles ─────────────────────────────────────────────────── */
+.grid {
+  display: grid;
+  gap: 14px;
+}
+.tiles {
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  margin-bottom: 14px;
+}
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px 18px;
+}
+.card + .card,
+.stack > .card {
+  margin-top: 14px;
+}
+.card h2 {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin: 0 0 12px;
+}
+.tile .label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.tile .value {
+  font-size: 34px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin: 4px 0 2px;
+  color: var(--ink);
+}
+.tile .note {
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+/* ── Win-rate bars (single hue = magnitude; labels wear ink) ────────────── */
+.bar-row {
+  display: grid;
+  grid-template-columns: 240px 1fr 52px;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+}
+.bar-row + .bar-row {
+  border-top: 1px solid var(--grid);
+}
+.bar-label {
+  font-size: 13px;
+  color: var(--ink);
+  font-weight: 600;
+}
+.bar-label .code {
+  color: var(--ink-2);
+  font-weight: 500;
+}
+.bar-track {
+  height: 12px;
+  background: var(--track);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.bar-fill {
+  height: 100%;
+  background: var(--series);
+  border-radius: 0 4px 4px 0;
+  min-width: 2px;
+}
+.bar-value {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  color: var(--ink);
+  font-weight: 600;
+}
+.bar-sub {
+  grid-column: 1 / -1;
+  font-size: 12px;
+  color: var(--ink-2);
+  margin-top: -2px;
+  padding-bottom: 6px;
+}
+.bar-sub ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+.bar-sub li {
+  margin: 2px 0;
+}
+.pmids {
+  display: inline-flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-left: 4px;
+}
+.pmid {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  background: var(--track);
+  border-radius: 4px;
+  padding: 1px 6px;
+  color: var(--ink-2);
+}
+
+/* ── Ledger table ───────────────────────────────────────────────────────── */
+.table-scroll {
+  overflow-x: auto;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  padding: 6px 10px 6px 0;
+  border-bottom: 1px solid var(--baseline);
+  white-space: nowrap;
+}
+td {
+  padding: 7px 10px 7px 0;
+  border-bottom: 1px solid var(--grid);
+  vertical-align: top;
+  color: var(--ink);
+}
+td.num {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+td .dim {
+  color: var(--ink-2);
+}
+
+/* ── Status badges: icon + label, never color alone ─────────────────────── */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  border-radius: 999px;
+  padding: 2px 9px;
+  white-space: nowrap;
+}
+.badge.won {
+  color: var(--good-text);
+  background: rgba(12, 163, 12, 0.1);
+}
+.badge.lost {
+  color: var(--critical);
+  background: rgba(208, 59, 59, 0.1);
+}
+.badge.pending {
+  color: var(--ink-2);
+  background: var(--track);
+}
+.badge.closed {
+  color: var(--ink-2);
+  background: var(--track);
+}
+.badge.failed {
+  color: #b4451f;
+  background: rgba(236, 131, 90, 0.14);
+}
+
+/* ── Artifact preview (redacted letter — the tokens ARE the demo) ───────── */
+.artifact {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  background: var(--track);
+  border: 1px solid var(--grid);
+  border-radius: 8px;
+  padding: 14px;
+  max-height: 340px;
+  overflow-y: auto;
+  color: var(--ink);
+}
+.empty {
+  color: var(--muted);
+  font-size: 13px;
+  padding: 8px 0;
+}
+.two-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .two-col {
+    grid-template-columns: 1fr;
+  }
+}
